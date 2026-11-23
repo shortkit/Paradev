@@ -12,6 +12,35 @@ import unittest
 import update
 
 
+class BuildToolchainTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.bun = self.root / "bun-darwin-aarch64/bun"
+        self.node = self.root / "node/bin/node"
+        self.system = self.root / "system"
+        self.executable(self.bun, "1.4.3")
+        self.executable(self.system / "node", "v22.16.0")
+
+    def executable(self, path, version):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"#!/bin/sh\necho {version}\n")
+        path.chmod(0o755)
+
+    def test_build_uses_private_node_ahead_of_inherited_path(self):
+        self.executable(self.node, "v22.23.5")
+        bun, path = update.build_toolchain(self.root, str(self.system))
+        self.assertEqual(bun, self.bun)
+        self.assertEqual(shutil.which("node", path=path), str(self.node))
+        self.assertEqual(shutil.which("bun", path=path), str(self.bun))
+
+    def test_incompatible_private_node_blocks_prepare(self):
+        self.executable(self.node, "v22.16.0")
+        with self.assertRaisesRegex(ValueError, "22.23.5"):
+            update.build_toolchain(self.root, str(self.system))
+
+
 class FakeMac:
     def __init__(self):
         self.stops = []

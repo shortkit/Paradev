@@ -4,7 +4,9 @@ The helper builds a production macOS arm64 directory bundle from a Git commit. I
 
 ## Prepare a build
 
-From the fork worktree, commit the change and run the helper with Python 3.9 or newer. It uses Bun 1.4.3 from `~/.local/share/paradev-fork/toolchain/bun-darwin-aarch64/bun`.
+Prepare requires Python 3.9 or newer and two private macOS arm64 tools. Place Bun 1.4.3 at `~/.local/share/paradev-fork/toolchain/bun-darwin-aarch64/bun` and Node.js v22.23.5 at `~/.local/share/paradev-fork/toolchain/node/bin/node`. Use the official Darwin arm64 Node archive and verify its checksum before extracting it. The desktop build imports TypeScript directly in Node. Prepare checks both versions and puts their directories first on the build PATH for fresh and reused stages.
+
+Commit the change in the fork worktree, then prepare its bundle.
 
 ```sh
 python3 scripts/shortkit/update.py prepare HEAD

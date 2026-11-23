@@ -492,6 +492,15 @@ class Installer:
                 ) from failure
 
 
+def build_toolchain(toolchain, inherited_path):
+    bun = toolchain / "bun-darwin-aarch64/bun"
+    node = toolchain / "node/bin/node"
+    for executable, expected in ((bun, "1.4.3"), (node, "v22.23.5")):
+        actual = output(executable, "--version")
+        require(actual == expected, f"Expected {executable} {expected}, found {actual}")
+    return bun, os.pathsep.join((str(bun.parent), str(node.parent), inherited_path))
+
+
 def prepare(revision, stage):
     commit = output(
         "git",
@@ -508,14 +517,14 @@ def prepare(revision, stage):
     )
     artifact = builds / commit / APP
     mac = Mac(DATA)
-    bun = STORE / "toolchain/bun-darwin-aarch64/bun"
-    require(output(bun, "--version") == "1.4.3", "Expected Bun 1.4.3")
+    bun, build_path = build_toolchain(
+        STORE / "toolchain", os.environ.get("PATH", os.defpath)
+    )
     # Never compile the login shell's stock workspace, service addresses, or credentials.
     env = {
         k: os.environ[k]
         for k in (
             "HOME",
-            "PATH",
             "TMPDIR",
             "LANG",
             "DEVELOPER_DIR",
@@ -525,7 +534,7 @@ def prepare(revision, stage):
         if k in os.environ
     }
     env.update(
-        PATH=str(bun.parent) + ":" + env["PATH"],
+        PATH=build_path,
         NODE_ENV="production",
         SHORTKIT_BUILD_COMMIT=commit,
         DESKTOP_DISPLAY_NAME=NAME,
