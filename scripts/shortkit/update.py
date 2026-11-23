@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import plistlib
 import re
+import shutil
 import socket
 import sqlite3
 import struct
@@ -37,6 +38,16 @@ MIGRATIONS = {
 }
 
 
+INVALID_BUNDLE = (
+    OSError,
+    ValueError,
+    TypeError,
+    KeyError,
+    plistlib.InvalidFileException,
+    subprocess.SubprocessError,
+)
+
+
 def require(condition, message):
     if not condition:
         raise ValueError(message)
@@ -53,14 +64,18 @@ def lock(path):
         yield
 
 
-@dataclass
-class Build:
+@dataclass(frozen=True)
+class Identity:
     commit: str
     protocols: str
+
+
+@dataclass(frozen=True)
+class Build(Identity):
     migrations: dict
 
 
-def read_build(app):
+def read_identity(app):
     require(not app.is_symlink(), f"Refusing linked bundle {app}")
     contents = app / "Contents"
     info = plistlib.loads((contents / "Info.plist").read_bytes())
@@ -84,9 +99,14 @@ def read_build(app):
     require(
         re.fullmatch(r"\d+/\d+", protocols), "Missing terminal daemon protocol versions"
     )
+    return Identity(commit, protocols)
+
+
+def read_build(app):
+    identity = read_identity(app)
     migrations = {}
     for db, name in MIGRATIONS.items():
-        folder = contents / "Resources/resources" / name
+        folder = app / "Contents/Resources/resources" / name
         entries = json.loads((folder / "meta/_journal.json").read_text())["entries"]
         history = {}
         for entry in entries:
@@ -102,21 +122,19 @@ def read_build(app):
             history[stamp] = hashlib.sha256(sql).hexdigest()
         require(history, f"Missing migrations for {db}")
         migrations[db] = history
-    return Build(commit, protocols, migrations)
+    return Build(identity.commit, identity.protocols, migrations)
 
 
-def check_compatible(home, candidate, current=None):
-    if current:
+def check_migration_history(current, candidate):
+    for db, history in current.migrations.items():
+        other = list(candidate.migrations[db].items())
         require(
-            current.protocols == candidate.protocols,
-            "Incompatible terminal daemon protocols",
+            other[: len(history)] == list(history.items()),
+            f"Incompatible migration history for {db}",
         )
-        for db, history in current.migrations.items():
-            other = list(candidate.migrations[db].items())
-            require(
-                other[: len(history)] == list(history.items()),
-                f"Incompatible migration history for {db}",
-            )
+
+
+def check_compatible(home, candidate):
     paths = [home / "local.db"]
     host = home / "host"
     if host.exists():
@@ -218,6 +236,9 @@ def verify_asar(archive, commit):
         ):
             packed(main[entry])
         packed(dist["renderer"]["files"]["index.html"])
+        preload = dist.get("preload", {}).get("files", {}).get("index.js")
+        require(preload and "offset" in preload, "Missing packed desktop preload")
+        packed(preload)
 
         def compiled(files):
             for name, entry in files.items():
@@ -233,9 +254,8 @@ def verify_asar(archive, commit):
 
 
 class Mac:
-    def __init__(self, home, debug_port=None):
+    def __init__(self, home):
         self.home = home
-        self.debug_port = debug_port
 
     def verify(self, app):
         contents = app / "Contents"
@@ -374,14 +394,77 @@ JSON.stringify(result)
                     live.add(pid)
         return live
 
-    def stop(self, app, build):
+    def check_no_terminal_daemons(self, app):
+        def check_pid(pid):
+            require(type(pid) is int and pid > 1, "Unknown terminal daemon PID")
+            require(
+                not process_exists(pid),
+                "Live terminal daemon without an installed bundle",
+            )
+
+        def check_socket(path):
+            with socket.socket(socket.AF_UNIX) as sock:
+                sock.settimeout(1)
+                try:
+                    sock.connect(str(path))
+                except (FileNotFoundError, ConnectionRefusedError):
+                    return
+                raise ValueError(
+                    f"Live terminal daemon socket without an installed bundle: {path}"
+                )
+
+        contents = str(app / "Contents") + "/"
+        commands = output("/bin/ps", "-axww", "-o", "comm=", timeout=5)
+        require(
+            not any(
+                command.lstrip().startswith(contents)
+                for command in commands.splitlines()
+            ),
+            "Live bundle process without an installed bundle",
+        )
+        legacy_pid = self.home / "terminal-host.pid"
+        if legacy_pid.exists():
+            check_pid(int(legacy_pid.read_text().strip()))
+        temporary_root = Path(
+            os.environ.get("TMPDIR")
+            or os.environ.get("TMP")
+            or os.environ.get("TEMP")
+            or "/tmp"
+        )
+        legacy_socket = self.home / "terminal-host.sock"
+        if len(os.fsencode(legacy_socket)) >= 104:
+            key = hashlib.sha256(os.fsencode(self.home)).hexdigest()[:16]
+            suffix = Path(f"paradev-terminal-{os.getuid()}") / f"{key}.sock"
+            legacy_socket = temporary_root / suffix
+            if len(os.fsencode(legacy_socket)) >= 104:
+                legacy_socket = Path("/tmp") / suffix
+        check_socket(legacy_socket)
+        hosts = self.home / "host"
+        for org in hosts.iterdir() if hosts.exists() else ():
+            if not org.is_dir():
+                continue
+            manifest = org / "pty-daemon-manifest.json"
+            if manifest.exists():
+                daemon = json.loads(manifest.read_text())
+                check_pid(daemon["pid"])
+                if "handoffSuccessorPid" in daemon:
+                    check_pid(daemon["handoffSuccessorPid"])
+                check_socket(daemon["socketPath"])
+            key = hashlib.sha256(f"{org.name}:{self.home}".encode()).hexdigest()[:12]
+            check_socket(temporary_root / f"superset-ptyd-{key}.sock")
+
+    def stop(self, app, build, before_quit, *, stopped_only=False):
         pid = self.pid(app)
         if pid is None:
             require(
                 not self.live_host_pids(),
                 "Fork host is still running without its desktop",
             )
-            return []
+            if build is None:
+                self.check_no_terminal_daemons(app)
+            before_quit([])
+            return
+        require(not stopped_only, "Damaged installation must already be stopped")
         require(build, "Unidentified fork is already running")
         status = self.status(app, build, pid)
         require(
@@ -389,6 +472,7 @@ JSON.stringify(result)
             "Cannot establish chat safety for every fork host",
         )
         require(not status["activeChats"], "Active built-in chat work")
+        before_quit(status["organizations"])
         stopped = self.status(app, build, pid, quit_app=True)
         wait_until(
             lambda: self.pid(app) is None, "Fork did not finish its ordinary quit"
@@ -398,17 +482,14 @@ JSON.stringify(result)
             lambda: not any(process_exists(p) for p in stopped["hostPids"]),
             "Fork host service is still exiting",
         )
-        return status["organizations"]
 
     def launch(self, app, build, organizations):
-        args = []
-        if self.debug_port is not None:
-            args = [
-                "--args",
-                f"--remote-debugging-port={self.debug_port}",
-                "--remote-debugging-address=127.0.0.1",
-            ]
-        run("/usr/bin/open", "-a", app, *args)
+        if self.pid(app) is None:
+            require(
+                not self.live_host_pids(),
+                "Fork host is still running without its desktop",
+            )
+            run("/usr/bin/open", "-a", app)
 
         def ready():
             pid = self.pid(app)
@@ -429,75 +510,270 @@ JSON.stringify(result)
         )
 
 
+def sync_dir(path):
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def sync_bundle(app):
+    for root, _, files in os.walk(app, topdown=False):
+        for name in files:
+            file = Path(root) / name
+            if not file.is_symlink():
+                with file.open("rb") as descriptor:
+                    os.fsync(descriptor.fileno())
+        sync_dir(root)
+
+
+def save_record(path, value):
+    temporary = path.with_suffix(".tmp")
+    with temporary.open("w") as descriptor:
+        json.dump(value, descriptor)
+        descriptor.flush()
+        os.fsync(descriptor.fileno())
+    temporary.replace(path)
+    sync_dir(path.parent)
+
+
 class Installer:
     def __init__(self, installed, home, mac):
         self.app, self.home, self.mac = installed, home, mac
         self.state = installed.parent / ".paradev-shortkit-update"
+        self.pending = self.state / "transaction.json"
+        self.receipt = self.state / "installed.json"
+        self.stage = self.state / "staging" / APP
 
-    def apply(self, candidate):
+    def archive(self, commit):
+        require(
+            isinstance(commit, str) and re.fullmatch("[a-f0-9]{40}", commit),
+            "Invalid recovery build record",
+        )
+        return self.state / commit / APP
+
+    def verified(self, app):
+        build = read_build(app)
+        self.mac.verify(app)
+        return build
+
+    def stage_copy(self, source, expected):
+        if self.stage.parent.exists():
+            shutil.rmtree(self.stage.parent)
+        self.stage.parent.mkdir()
+        self.mac.copy(source, self.stage)
+        require(self.verified(self.stage) == expected, "Build changed during staging")
+        sync_bundle(self.stage)
+
+    def retain(self, app, build):
+        saved = self.archive(build.commit)
+        if saved.exists():
+            require(self.verified(saved) == build, "Recovery identity mismatch")
+            return
+        self.stage_copy(app, build)
+        saved.parent.mkdir(exist_ok=True)
+        self.stage.rename(saved)
+        sync_dir(saved.parent)
+        sync_dir(self.state)
+
+    def previous(self):
+        if self.receipt.exists():
+            commit = json.loads(self.receipt.read_text())["previous"]
+        else:
+            legacy = self.state / "previous"
+            commit = legacy.read_text().strip() if legacy.exists() else None
+        return commit
+
+    def apply(self, candidate=None):
         with lock(self.state / "install.lock"):
-            self.replace(candidate)
+            self.change(candidate, rollback=False)
 
     def rollback(self):
         with lock(self.state / "install.lock"):
-            commit = (self.state / "previous").read_text().strip()
-            require(
-                re.fullmatch("[a-f0-9]{40}", commit), "Invalid previous build record"
-            )
-            self.replace(self.state / commit / APP)
+            self.change(None, rollback=True)
 
-    def replace(self, candidate):
+    def installed_identity(self):
         require(
             self.app.name == APP and not self.app.is_symlink(),
             "Invalid installation target",
         )
-        current = read_build(self.app) if self.app.exists() else None
-        wanted = read_build(candidate)
-        check_compatible(self.home, wanted, current)
-        with tempfile.TemporaryDirectory(dir=self.state) as scratch:
-            staged = Path(scratch) / APP
-            self.mac.copy(candidate, staged)
-            require(read_build(staged) == wanted, "Candidate changed during staging")
-            self.mac.verify(staged)
-            if current:
-                self.mac.verify(self.app)
-                backup = self.state / current.commit / APP
-                if not backup.exists():
-                    backup.parent.mkdir(exist_ok=True)
-                    saved = Path(scratch) / "recovery" / APP
-                    saved.parent.mkdir()
-                    self.mac.copy(self.app, saved)
-                    saved.rename(backup)
-                require(read_build(backup) == current, "Recovery identity mismatch")
-                self.mac.verify(backup)
-                pointer = self.state / "previous.tmp"
-                pointer.write_text(current.commit)
-            organizations = self.mac.stop(self.app, current)
-            if current:
-                try:
-                    check_compatible(self.home, wanted, current)
-                    self.mac.exchange(self.app, staged)
-                except Exception:
-                    self.mac.launch(self.app, current, organizations)
-                    raise
-            else:
-                staged.rename(self.app)
+        return read_identity(self.app) if self.app.exists() else None
+
+    def start_transaction(self, candidate, rollback):
+        current = self.installed_identity()
+        previous = self.previous()
+        if rollback:
+            require(previous, "No previous build recorded")
+            candidate = self.archive(previous)
+        require(
+            candidate is not None,
+            "Supply a candidate; there is no unfinished transaction",
+        )
+        wanted = self.verified(candidate)
+        if rollback:
+            require(wanted.commit == previous, "Previous build identity mismatch")
+        check_compatible(self.home, wanted)
+        recoverable = False
+        if current is not None:
+            require(
+                current.protocols == wanted.protocols,
+                "Incompatible terminal daemon protocols",
+            )
             try:
-                if current:
-                    pointer.replace(self.state / "previous")
-                self.mac.launch(self.app, wanted, organizations)
-            except Exception as failure:
-                if not current:
+                installed = self.verified(self.app)
+            except INVALID_BUNDLE:
+                if not rollback:
                     raise
-                # A failed launch may already have migrated a database.
-                check_compatible(self.home, current)
-                self.mac.stop(self.app, wanted)
-                check_compatible(self.home, current)
-                self.mac.exchange(self.app, staged)
-                self.mac.launch(self.app, current, organizations)
-                raise ValueError(
-                    f"Update failed; restored {current.commit}: {failure}"
-                ) from failure
+                self.check_damaged_source(current)
+            else:
+                if installed.commit == wanted.commit:
+                    require(
+                        installed == wanted, "Conflicting builds for the same commit"
+                    )
+                    self.mac.launch(self.app, installed, [])
+                    return None
+                if not rollback:
+                    check_migration_history(installed, wanted)
+                self.retain(self.app, installed)
+                recoverable = True
+        self.retain(candidate, wanted)
+        return dict(
+            source=current.commit if current else None,
+            target=wanted.commit,
+            protocols=wanted.protocols,
+            previous=previous,
+            rollback=rollback,
+            recoverable=recoverable,
+            organizations=[],
+        )
+
+    def change(self, candidate, rollback):
+        if self.pending.exists():
+            tx = json.loads(self.pending.read_text())
+            if candidate is not None:
+                require(
+                    self.verified(candidate).commit == tx["target"],
+                    "Unfinished transaction: retry its target or run rollback",
+                )
+            reverse = candidate is None and (
+                tx.get("restoring", False) or (rollback and not tx["rollback"])
+            )
+            require(
+                not reverse or tx["recoverable"],
+                "No compatible predecessor recorded; retry apply",
+            )
+        else:
+            tx = self.start_transaction(candidate, rollback)
+            if tx is None:
+                return
+            reverse = False
+
+        try:
+            self.transition(tx, reverse)
+        except Exception as failure:
+            if reverse or not tx["recoverable"] or not self.pending.exists():
+                raise
+            # Stop may have failed before the desktop acknowledged quit. Never
+            # turn that failure into a request to stop a different live build.
+            if self.installed_identity() == Identity(tx["source"], tx["protocols"]):
+                if self.mac.pid(self.app) is None:
+                    self.transition(tx, True)
+                raise
+            self.transition(tx, True)
+            raise ValueError(
+                f"Update failed; restored {tx['source']}: {failure}"
+            ) from failure
+
+    def check_damaged_source(self, identity):
+        require(
+            self.mac.pid(self.app) is None and not self.mac.live_host_pids(),
+            "Damaged installation must already be stopped",
+        )
+        if self.receipt.exists():
+            receipt = json.loads(self.receipt.read_text())
+            require(
+                (receipt["commit"], receipt["protocols"])
+                == (identity.commit, identity.protocols),
+                "Damaged installation differs from its verified receipt",
+            )
+        else:
+            # Installations made before receipts can use their verified prepare artifact.
+            original = self.verified(STORE / "builds" / identity.commit / APP)
+            require(
+                (original.commit, original.protocols)
+                == (identity.commit, identity.protocols),
+                "Damaged installation differs from its verified artifact",
+            )
+
+    def transition(self, tx, reverse):
+        destination = tx["source"] if reverse else tx["target"]
+        other = tx["target"] if reverse else tx["source"]
+        archive = self.archive(destination)
+        wanted = self.verified(archive)
+        require(
+            wanted.commit == destination and wanted.protocols == tx["protocols"],
+            "Staged recovery identity mismatch",
+        )
+        current = self.installed_identity()
+        commit = current.commit if current else None
+        require(
+            commit in (other, destination)
+            and (not current or current.protocols == wanted.protocols),
+            "Installed bundle differs from the transaction",
+        )
+        check_compatible(self.home, wanted)
+
+        def record_intent(organizations):
+            tx["restoring"] = reverse
+            sync_dir(self.app.parent)
+            tx["organizations"] = sorted(set(tx["organizations"]) | set(organizations))
+            save_record(self.pending, tx)
+
+        if commit != destination:
+            self.stage_copy(archive, wanted)
+            stopped_only = (
+                current is not None
+                and current.commit == tx["source"]
+                and not tx["recoverable"]
+            )
+            if current and not stopped_only:
+                try:
+                    self.verified(self.app)
+                except INVALID_BUNDLE:
+                    if not reverse:
+                        raise
+                    stopped_only = True
+
+            self.mac.stop(self.app, current, record_intent, stopped_only=stopped_only)
+            require(
+                self.installed_identity() == current, "Installation changed during quit"
+            )
+            check_compatible(self.home, wanted)
+            if current:
+                self.mac.exchange(self.app, self.stage)
+            else:
+                self.stage.rename(self.app)
+            sync_dir(self.app.parent)
+        else:
+            require(
+                self.verified(self.app) == wanted,
+                "Installed build differs from recovery copy",
+            )
+            if tx.get("restoring", False) != reverse:
+                record_intent([])
+        self.mac.launch(self.app, wanted, tx["organizations"])
+        previous = (
+            tx["previous"] if reverse else (tx["source"] if tx["recoverable"] else None)
+        )
+        save_record(
+            self.receipt,
+            dict(commit=destination, protocols=wanted.protocols, previous=previous),
+        )
+        self.pending.unlink()
+        sync_dir(self.state)
+        if self.stage.parent.exists():
+            shutil.rmtree(self.stage.parent)
 
 
 def build_toolchain(toolchain, inherited_path):
@@ -644,16 +920,6 @@ def prepare(revision, stage):
     return artifact
 
 
-def parse_debug_port(value):
-    try:
-        port = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("expected an integer port") from exc
-    if not 1024 <= port <= 65535:
-        raise argparse.ArgumentTypeError("port must be between 1024 and 65535")
-    return port
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -670,15 +936,13 @@ def main():
         "candidate", type=Path
     )
     apply = sub.add_parser("apply", help="install or update the fork")
-    apply.add_argument("candidate", type=Path)
-    rollback = sub.add_parser("rollback", help="restore the previous compatible bundle")
-    for command in (apply, rollback):
-        command.add_argument(
-            "--debug-port",
-            type=parse_debug_port,
-            metavar="PORT",
-            help="launch with loopback CDP on PORT (1024–65535)",
-        )
+    apply.add_argument(
+        "candidate",
+        nargs="?",
+        type=Path,
+        help="verified bundle, or omit to resume the pending transaction",
+    )
+    sub.add_parser("rollback", help="restore the previous compatible bundle")
     args = parser.parse_args()
     require(sys.platform == "darwin", "This local installer requires macOS")
     if args.command == "prepare":
@@ -689,13 +953,13 @@ def main():
         Mac(DATA).verify(candidate)
         print(f"{ID} {build.commit} {candidate}")
     else:
-        installer = Installer(INSTALL, DATA, Mac(DATA, debug_port=args.debug_port))
+        installer = Installer(INSTALL, DATA, Mac(DATA))
         print(
             "Browser panes and browser automation disconnect during restart. Finish browser-dependent work before applying.",
             flush=True,
         )
         if args.command == "apply":
-            installer.apply(args.candidate.absolute())
+            installer.apply(args.candidate.absolute() if args.candidate else None)
         else:
             installer.rollback()
         print(f"Running {read_build(INSTALL).commit} at {INSTALL}")

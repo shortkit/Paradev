@@ -1,4 +1,3 @@
-import argparse
 import contextlib
 import json
 import socket
@@ -7,6 +6,7 @@ from pathlib import Path
 import plistlib
 import shutil
 import sqlite3
+import struct
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -57,25 +57,88 @@ class BuildToolchainTests(unittest.TestCase):
         self.assertEqual(runtime.read_text().strip(), "v22.23.5")
 
 
+class PackagedPreloadTests(unittest.TestCase):
+    def test_preload_must_be_a_nonempty_packed_entry(self):
+        with tempfile.TemporaryDirectory() as folder:
+            archive = Path(folder) / "app.asar"
+            entries = {
+                "package.json": json.dumps(
+                    dict(
+                        productName=update.NAME,
+                        name="paradev-shortkit",
+                        main="dist/main/index.js",
+                    )
+                ).encode(),
+                "dist/main/index.js": b"a" * 40,
+                "dist/main/host-service.js": b"host",
+                "dist/main/pty-daemon.js": b"pty",
+                "dist/main/terminal-host.js": b"terminal",
+                "dist/renderer/index.html": b"renderer",
+            }
+
+            def pack():
+                tree = {}
+                payload = bytearray()
+                for path, data in entries.items():
+                    parts = path.split("/")
+                    directory = tree
+                    for part in parts[:-1]:
+                        directory = directory.setdefault(part, {"files": {}})["files"]
+                    directory[parts[-1]] = dict(
+                        offset=str(len(payload)), size=len(data)
+                    )
+                    payload.extend(data)
+                header = json.dumps({"files": tree}).encode()
+                padded = header + bytes((-len(header)) % 4)
+                archive.write_bytes(
+                    struct.pack("<4I", 4, 8 + len(padded), 4 + len(padded), len(header))
+                    + padded
+                    + payload
+                )
+
+            pack()
+            with self.assertRaisesRegex(ValueError, "preload"):
+                update.verify_asar(archive, "a" * 40)
+            entries["dist/preload/index.js"] = b""
+            pack()
+            with self.assertRaisesRegex(ValueError, "packed resource"):
+                update.verify_asar(archive, "a" * 40)
+            entries["dist/preload/index.js"] = b"preload"
+            pack()
+            update.verify_asar(archive, "a" * 40)
+
+
 class FakeMac:
     def __init__(self):
         self.stops = []
         self.opened = []
         self.unhealthy = None
         self.unsafe = False
+        self.running = None
+        self.organizations = []
 
     def verify(self, app):
         if not (app / "Contents/Resources/app.asar").is_file():
             raise ValueError("missing ASAR")
 
-    def stop(self, app, build):
+    def pid(self, app):
+        return self.running
+
+    def live_host_pids(self):
+        return set()
+
+    def stop(self, app, build, before_quit, *, stopped_only=False):
         if self.unsafe:
             raise ValueError("chat state unavailable")
-        self.stops.append(build.commit)
-        return []
+        if stopped_only and self.running:
+            raise ValueError("Damaged installation must already be stopped")
+        before_quit(self.organizations)
+        self.running = None
+        self.stops.append(build.commit if build else None)
 
     def launch(self, app, build, organizations):
         self.opened.append(build.commit)
+        self.running = 123
         if build.commit == self.unhealthy:
             raise ValueError("health check failed")
 
@@ -131,29 +194,6 @@ class InstallTests(unittest.TestCase):
             self.installer.apply(self.candidate)
         self.assertEqual(update.read_build(self.app).commit, "a" * 40)
         self.assertEqual(self.mac.stops, [])
-
-    def test_launch_only_requests_loopback_debugging_with_an_explicit_port(self):
-        build = update.read_build(self.app)
-        with patch.object(update, "run") as launch, patch.object(update, "wait_until"):
-            update.Mac(self.home).launch(self.app, build, [])
-            launch.assert_called_once_with("/usr/bin/open", "-a", self.app)
-            launch.reset_mock()
-            update.Mac(self.home, debug_port=9417).launch(self.app, build, [])
-            launch.assert_called_once_with(
-                "/usr/bin/open",
-                "-a",
-                self.app,
-                "--args",
-                "--remote-debugging-port=9417",
-                "--remote-debugging-address=127.0.0.1",
-            )
-
-    def test_debug_port_requires_an_integer_in_the_allowed_range(self):
-        for value in ("1024", "65535"):
-            self.assertEqual(update.parse_debug_port(value), int(value))
-        for value in ("1023", "65536", "9417.5", "port"):
-            with self.assertRaises(argparse.ArgumentTypeError, msg=value):
-                update.parse_debug_port(value)
 
     def test_display_name_alone_never_identifies_the_target(self):
         plist = self.app / "Contents/Info.plist"
@@ -218,6 +258,202 @@ class InstallTests(unittest.TestCase):
         self.installer.rollback()
         self.assertEqual(update.read_build(self.app).commit, "a" * 40)
         self.assertEqual(self.mac.opened, ["b" * 40, "a" * 40])
+
+    def test_retry_of_same_commit_preserves_previous_without_quit(self):
+        self.installer.apply(self.candidate)
+        stops = list(self.mac.stops)
+        self.installer.apply(self.candidate)
+        self.assertEqual(self.mac.stops, stops)
+        self.installer.rollback()
+        self.assertEqual(update.read_build(self.app).commit, "a" * 40)
+
+    def test_interruption_after_exchange_leaves_previous_recoverable(self):
+        swap = self.mac.exchange
+
+        def interrupt(left, right):
+            swap(left, right)
+            raise KeyboardInterrupt
+
+        self.mac.organizations = ["first"]
+        with (
+            patch.object(self.mac, "exchange", interrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            self.installer.apply(self.candidate)
+        self.assertEqual(update.read_build(self.app).commit, "b" * 40)
+        self.assertTrue(self.installer.pending.exists())
+        resumed = update.Installer(self.app, self.home, self.mac)
+        with patch.object(self.mac, "launch", wraps=self.mac.launch) as launch:
+            resumed.rollback()
+            self.assertEqual(launch.call_args.args[2], ["first"])
+        self.assertEqual(update.read_build(self.app).commit, "a" * 40)
+        self.assertFalse(resumed.pending.exists())
+
+    def test_interrupted_automatic_restore_resumes_the_recovery_build(self):
+        self.mac.unhealthy = "b" * 40
+        launch = self.mac.launch
+
+        def interrupt_recovery(app, build, organizations):
+            if build.commit == "a" * 40:
+                raise KeyboardInterrupt
+            launch(app, build, organizations)
+
+        with (
+            patch.object(self.mac, "launch", interrupt_recovery),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            self.installer.apply(self.candidate)
+        self.assertEqual(update.read_build(self.app).commit, "a" * 40)
+        self.installer.apply()
+        self.assertEqual(self.mac.opened, ["b" * 40, "a" * 40])
+        self.assertIsNone(self.installer.previous())
+
+    def test_retry_after_recording_success_does_not_roll_back_twice(self):
+        self.installer.apply(self.candidate)
+        unlink = Path.unlink
+
+        def interrupt(path, *args, **kwargs):
+            if path == self.installer.pending:
+                raise KeyboardInterrupt
+            return unlink(path, *args, **kwargs)
+
+        with (
+            patch.object(Path, "unlink", interrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            self.installer.rollback()
+        stops = list(self.mac.stops)
+        self.installer.rollback()
+        self.assertEqual(self.mac.stops, stops)
+        self.assertEqual(self.installer.previous(), "b" * 40)
+        self.assertEqual(update.read_build(self.app).commit, "a" * 40)
+
+    def test_retry_after_quit_can_finish_from_the_durable_stage(self):
+        with (
+            patch.object(self.mac, "exchange", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            self.installer.apply(self.candidate)
+        self.assertEqual(update.read_build(self.app).commit, "a" * 40)
+        resumed = update.Installer(self.app, self.home, self.mac)
+        shutil.rmtree(self.candidate)
+        resumed.apply()
+        self.assertEqual(update.read_build(self.app).commit, "b" * 40)
+        resumed.rollback()
+        self.assertEqual(update.read_build(self.app).commit, "a" * 40)
+
+    def add_chat_migration(self):
+        folder = self.candidate / "Contents/Resources/resources/chat-migrations"
+        journal = folder / "meta/_journal.json"
+        data = json.loads(journal.read_text())
+        data["entries"].append({"tag": "0001_chat", "when": 101})
+        journal.write_text(json.dumps(data))
+        (folder / "0001_chat.sql").write_text("select 2")
+
+    def test_rollback_allows_unapplied_migration(self):
+        self.add_chat_migration()
+        self.installer.apply(self.candidate)
+        self.installer.rollback()
+        self.assertEqual(update.read_build(self.app).commit, "a" * 40)
+
+    def test_rollback_refuses_applied_migration_before_quit(self):
+        self.add_chat_migration()
+        self.installer.apply(self.candidate)
+        org = self.home / "host/org"
+        org.mkdir(parents=True)
+        with contextlib.closing(sqlite3.connect(org / "chat.db")) as db:
+            db.execute(
+                "CREATE TABLE __drizzle_migrations (created_at INTEGER, hash TEXT)"
+            )
+            db.execute(
+                "INSERT INTO __drizzle_migrations VALUES (101, ?)",
+                (update.read_build(self.candidate).migrations["chat.db"][101],),
+            )
+            db.commit()
+        with self.assertRaisesRegex(ValueError, "applied migration"):
+            self.installer.rollback()
+        self.assertEqual(self.mac.stops, ["a" * 40])
+
+    def test_only_a_stopped_identified_damaged_bundle_can_be_recovered(self):
+        self.installer.apply(self.candidate)
+        (self.app / "Contents/Resources/app.asar").unlink()
+        with self.assertRaisesRegex(ValueError, "already be stopped"):
+            self.installer.rollback()
+        self.mac.running = None
+        plist = self.app / "Contents/Info.plist"
+        info = plistlib.loads(plist.read_bytes())
+        for key, bad, message in [
+            ("CFBundleIdentifier", "com.superset.desktop", "identity"),
+            ("ShortKitCommit", "c" * 40, "verified receipt"),
+            ("ShortKitDaemonProtocols", "2/3", "protocols"),
+        ]:
+            plist.write_bytes(plistlib.dumps({**info, key: bad}))
+            with self.assertRaisesRegex(ValueError, message):
+                self.installer.rollback()
+        plist.write_bytes(plistlib.dumps(info))
+        self.installer.rollback()
+        self.assertEqual(update.read_build(self.app).commit, "a" * 40)
+        self.assertIsNone(self.installer.previous())
+
+    def test_missing_install_refuses_surviving_terminal_daemons(self):
+        shutil.rmtree(self.app)
+        org = self.home / "host/org"
+        org.mkdir(parents=True)
+        mac = update.Mac(self.home)
+        with (
+            patch.object(mac, "pid", return_value=None),
+            patch.object(update, "output", return_value=""),
+            patch.object(update, "process_exists", return_value=True),
+        ):
+            for record, contents in [
+                (self.home / "terminal-host.pid", "321"),
+                (org / "pty-daemon-manifest.json", json.dumps({"pid": 321})),
+            ]:
+                record.write_text(contents)
+                with self.assertRaisesRegex(ValueError, "Live terminal daemon"):
+                    mac.stop(self.app, None, lambda _: self.fail("unsafe install"))
+                record.unlink()
+
+    def test_reinstall_checks_a_manifestless_daemon_socket(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as folder:
+            org = self.home / "host/org"
+            org.mkdir(parents=True)
+            key = update.hashlib.sha256(f"org:{self.home}".encode()).hexdigest()[:12]
+            endpoint = Path(folder) / f"superset-ptyd-{key}.sock"
+            mac = update.Mac(self.home)
+            with (
+                socket.socket(socket.AF_UNIX) as listener,
+                patch.dict(update.os.environ, {"TMPDIR": folder}),
+                patch.object(update, "output", return_value=""),
+            ):
+                listener.bind(str(endpoint))
+                listener.listen(1)
+                with self.assertRaisesRegex(ValueError, "Live terminal daemon socket"):
+                    mac.check_no_terminal_daemons(self.app)
+
+    def test_first_install_can_resume_after_exchange_without_original_artifact(self):
+        shutil.rmtree(self.app)
+        with (
+            patch.object(self.mac, "launch", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            self.installer.apply(self.candidate)
+        with self.assertRaisesRegex(ValueError, "No compatible predecessor"):
+            self.installer.rollback()
+        shutil.rmtree(self.candidate)
+        self.installer.apply()
+        self.assertEqual(update.read_build(self.app).commit, "b" * 40)
+        self.assertIsNone(self.installer.previous())
+        self.assertFalse(self.installer.pending.exists())
+
+    def test_old_previous_pointer_still_selects_the_verified_backup(self):
+        previous = self.installer.archive("b" * 40)
+        previous.parent.mkdir(parents=True)
+        self.mac.copy(self.candidate, previous)
+        (self.installer.state / "previous").write_text("b" * 40)
+        self.installer.rollback()
+        self.assertEqual(update.read_build(self.app).commit, "b" * 40)
+        self.assertEqual(self.installer.previous(), "a" * 40)
 
     def test_read_live_health_preserves_the_full_success_response(self):
         # Keep the Unix path below the Darwin limit, including a long TMPDIR.
