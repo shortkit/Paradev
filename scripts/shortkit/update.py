@@ -134,7 +134,7 @@ def check_migration_history(current, candidate):
         )
 
 
-def check_compatible(home, candidate):
+def applied_migration_conflict(home, candidate):
     paths = [home / "local.db"]
     host = home / "host"
     if host.exists():
@@ -150,10 +150,15 @@ def check_compatible(home, candidate):
             rows = db.execute("SELECT created_at, hash FROM __drizzle_migrations")
             known = candidate.migrations[path.name]
             for stamp, digest in rows:
-                require(
-                    known.get(stamp) == digest,
-                    f"Incompatible applied migration {stamp} in {path}",
-                )
+                if known.get(stamp) != digest:
+                    return f"Incompatible applied migration {stamp} in {path}"
+    return None
+
+
+def check_compatible(home, candidate):
+    conflict = applied_migration_conflict(home, candidate)
+    if conflict:
+        raise ValueError(conflict)
 
 
 def process_exists(pid):
@@ -558,6 +563,14 @@ class Installer:
         self.mac.verify(app)
         return build
 
+    def verified_archive(self, commit, protocols):
+        build = self.verified(self.archive(commit))
+        require(
+            build.commit == commit and build.protocols == protocols,
+            "Staged recovery identity mismatch",
+        )
+        return build
+
     def stage_copy(self, source, expected):
         if self.stage.parent.exists():
             shutil.rmtree(self.stage.parent)
@@ -648,17 +661,45 @@ class Installer:
             organizations=[],
         )
 
+    def forward_repair(self, tx, candidate, wanted):
+        require(
+            tx["recoverable"] and not tx["rollback"] and not tx.get("restoring"),
+            "Finish the pending transaction with bare apply or rollback",
+        )
+        require(
+            self.installed_identity() == Identity(tx["target"], tx["protocols"]),
+            "Forward repair requires the pending target to be installed",
+        )
+        failed_archive = self.archive(tx["target"])
+        installed = self.verified(self.app)
+        require(
+            installed == self.verified(failed_archive),
+            "Installed build differs from the retained target",
+        )
+        require(
+            wanted.protocols == installed.protocols,
+            "Incompatible terminal daemon protocols",
+        )
+        predecessor = self.verified_archive(tx["source"], tx["protocols"])
+        require(
+            applied_migration_conflict(self.home, predecessor),
+            "Rollback is compatible; finish the pending transaction with apply or rollback",
+        )
+        check_compatible(self.home, wanted)
+        check_migration_history(installed, wanted)
+        self.retain(candidate, wanted)
+        digest = hashlib.sha256(self.pending.read_bytes()).hexdigest()
+        save_record(failed_archive.parent / f"transaction-{digest}.json", tx)
+        return {**tx, "repair_from": installed.commit, "target": wanted.commit}
+
     def change(self, candidate, rollback):
         if self.pending.exists():
             tx = json.loads(self.pending.read_text())
             if candidate is not None:
-                require(
-                    self.verified(candidate).commit == tx["target"],
-                    "Unfinished transaction: retry its target or run rollback",
-                )
-            reverse = candidate is None and (
-                tx.get("restoring", False) or (rollback and not tx["rollback"])
-            )
+                wanted = self.verified(candidate)
+                if wanted.commit != tx["target"]:
+                    tx = self.forward_repair(tx, candidate, wanted)
+            reverse = tx.get("restoring", False) or (rollback and not tx["rollback"])
             require(
                 not reverse or tx["recoverable"],
                 "No compatible predecessor recorded; retry apply",
@@ -676,7 +717,10 @@ class Installer:
                 raise
             # Stop may have failed before the desktop acknowledged quit. Never
             # turn that failure into a request to stop a different live build.
-            if self.installed_identity() == Identity(tx["source"], tx["protocols"]):
+            current = self.installed_identity()
+            if current and current.commit == tx.get("repair_from"):
+                raise
+            if current == Identity(tx["source"], tx["protocols"]):
                 if self.mac.pid(self.app) is None:
                     self.transition(tx, True)
                 raise
@@ -708,13 +752,8 @@ class Installer:
 
     def transition(self, tx, reverse):
         destination = tx["source"] if reverse else tx["target"]
-        other = tx["target"] if reverse else tx["source"]
-        archive = self.archive(destination)
-        wanted = self.verified(archive)
-        require(
-            wanted.commit == destination and wanted.protocols == tx["protocols"],
-            "Staged recovery identity mismatch",
-        )
+        other = tx["target"] if reverse else tx.get("repair_from", tx["source"])
+        wanted = self.verified_archive(destination, tx["protocols"])
         current = self.installed_identity()
         commit = current.commit if current else None
         require(
@@ -731,7 +770,7 @@ class Installer:
             save_record(self.pending, tx)
 
         if commit != destination:
-            self.stage_copy(archive, wanted)
+            self.stage_copy(self.archive(destination), wanted)
             stopped_only = (
                 current is not None
                 and current.commit == tx["source"]

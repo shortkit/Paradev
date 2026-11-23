@@ -308,6 +308,27 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(self.mac.opened, ["b" * 40, "a" * 40])
         self.assertIsNone(self.installer.previous())
 
+    def test_explicit_retry_finishes_an_interrupted_restoration(self):
+        self.mac.unhealthy = "b" * 40
+        exchange = self.mac.exchange
+
+        def interrupt_after_restoring(left, right):
+            exchange(left, right)
+            if update.read_identity(left).commit == "a" * 40:
+                raise KeyboardInterrupt
+
+        with (
+            patch.object(self.mac, "exchange", interrupt_after_restoring),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            self.installer.apply(self.candidate)
+        self.assertTrue(json.loads(self.installer.pending.read_text())["restoring"])
+        self.mac.unhealthy = None
+        self.installer.apply(self.candidate)
+        self.assertEqual(update.read_identity(self.app).commit, "a" * 40)
+        self.assertEqual(self.mac.opened, ["b" * 40, "a" * 40])
+        self.assertFalse(self.installer.pending.exists())
+
     def test_retry_after_recording_success_does_not_roll_back_twice(self):
         self.installer.apply(self.candidate)
         unlink = Path.unlink
@@ -342,8 +363,9 @@ class InstallTests(unittest.TestCase):
         resumed.rollback()
         self.assertEqual(update.read_build(self.app).commit, "a" * 40)
 
-    def add_chat_migration(self):
-        folder = self.candidate / "Contents/Resources/resources/chat-migrations"
+    def add_chat_migration(self, app=None):
+        resources = (app or self.candidate) / "Contents/Resources/resources"
+        folder = resources / "chat-migrations"
         journal = folder / "meta/_journal.json"
         data = json.loads(journal.read_text())
         data["entries"].append({"tag": "0001_chat", "when": 101})
@@ -359,6 +381,12 @@ class InstallTests(unittest.TestCase):
     def test_rollback_refuses_applied_migration_before_quit(self):
         self.add_chat_migration()
         self.installer.apply(self.candidate)
+        self.apply_chat_migration()
+        with self.assertRaisesRegex(ValueError, "applied migration"):
+            self.installer.rollback()
+        self.assertEqual(self.mac.stops, ["a" * 40])
+
+    def apply_chat_migration(self):
         org = self.home / "host/org"
         org.mkdir(parents=True)
         with contextlib.closing(sqlite3.connect(org / "chat.db")) as db:
@@ -370,9 +398,54 @@ class InstallTests(unittest.TestCase):
                 (update.read_build(self.candidate).migrations["chat.db"][101],),
             )
             db.commit()
+
+    def test_compatible_forward_repair_after_failed_build_migrates_database(self):
+        self.add_chat_migration()
+        self.mac.unhealthy = "b" * 40
+        self.mac.organizations = ["original-org"]
+        launch = self.mac.launch
+
+        def launch_with_migration(app, build, organizations):
+            self.apply_chat_migration()
+            launch(app, build, organizations)
+
+        with (
+            patch.object(self.mac, "launch", launch_with_migration),
+            self.assertRaisesRegex(ValueError, "applied migration"),
+        ):
+            self.installer.apply(self.candidate)
+        pending = json.loads(self.installer.pending.read_text())
+        fix = self.bundle(self.root / "repair", "c")
         with self.assertRaisesRegex(ValueError, "applied migration"):
-            self.installer.rollback()
+            self.installer.apply(fix)
+        self.add_chat_migration(fix)
+        self.mac.unsafe = True
+        with self.assertRaisesRegex(ValueError, "chat"):
+            self.installer.apply(fix)
         self.assertEqual(self.mac.stops, ["a" * 40])
+        self.assertEqual(json.loads(self.installer.pending.read_text()), pending)
+
+        self.mac.unsafe = False
+        self.mac.organizations = ["repair-org"]
+        with (
+            patch.object(self.mac, "exchange", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            self.installer.apply(fix)
+        shutil.rmtree(fix)
+        resumed = update.Installer(self.app, self.home, self.mac)
+        with patch.object(self.mac, "launch", wraps=launch) as opened:
+            resumed.apply()
+            self.assertEqual(opened.call_args.args[2], ["original-org", "repair-org"])
+        self.assertEqual(update.read_identity(self.app).commit, "c" * 40)
+        self.assertEqual(resumed.previous(), "a" * 40)
+        self.assertFalse(resumed.pending.exists())
+        failed_archive = resumed.archive("b" * 40)
+        self.assertEqual(update.read_identity(failed_archive).commit, "b" * 40)
+        records = failed_archive.parent.glob("transaction-*.json")
+        self.assertIn(pending, [json.loads(record.read_text()) for record in records])
+        with self.assertRaisesRegex(ValueError, "applied migration"):
+            resumed.rollback()
 
     def test_only_a_stopped_identified_damaged_bundle_can_be_recovered(self):
         self.installer.apply(self.candidate)

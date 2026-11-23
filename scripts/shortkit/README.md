@@ -59,9 +59,17 @@ If the helper was interrupted, resume using the retained candidate:
 python3 scripts/shortkit/update.py apply
 ```
 
-A pending update can also be canceled with `rollback` when it has a verified predecessor. An interrupted first install can be resumed with `apply`. An interrupted rollback can be finished with either command. Keep the state directory while recovery is pending. Its lock serializes concurrent helpers, and the next invocation checks the installed identity to determine which side of the exchange is on disk.
+A pending update can also be canceled with `rollback` when it has a verified predecessor. An interrupted first install can be resumed with `apply`. An interrupted rollback can be finished with either command. Once the helper records a decision to restore the predecessor, repeating the original `apply "$candidate"` also finishes that restoration. Keep the state directory while recovery is pending. Its lock serializes concurrent helpers, and the next invocation checks the installed identity to determine which side of the exchange is on disk.
 
 Rollback checks both terminal protocols and the migration hashes applied to each existing desktop, host and chat database. A migration present only in the newer bundle can be left behind if it was never applied. An incompatible applied migration needs a forward fix. If a candidate fails its health check, the helper attempts to reopen its verified, compatible predecessor. A running app or host that cannot report chat safety needs an ordinary quit before retrying recovery.
+
+If the failed candidate is installed and its applied migrations block the predecessor, prepare a fixed build and supply its bundle path explicitly.
+
+```sh
+python3 scripts/shortkit/update.py apply "$fixed_bundle"
+```
+
+The helper verifies that the installed build matches the retained failed candidate and that the fix preserves its protocols, migration history and applied database hashes. Before requesting quit it checks chat and host safety and carries the expected organizations into the repair. The failed build's archive retains the superseded transaction as `transaction-<digest>.json`. If repair is interrupted after quit was requested, bare `apply` resumes from the retained fix. A successful repair keeps the last verified predecessor as the rollback selection, subject to the applied-migration check.
 
 Rollback can replace a damaged, stopped installation if its plist still proves the exact fork identity, commit and protocol pair, the verified receipt (or original prepared artifact for older installations) agrees, and its host services have exited. The helper excludes the damaged build from subsequent recovery. When the installed bundle is missing, the helper checks for surviving bundle processes, host services, terminal daemon PIDs and sockets before installing. If a daemon is live, preserve its work and recover the matching installed bundle first. The helper leaves databases and terminal processes in place.
 
