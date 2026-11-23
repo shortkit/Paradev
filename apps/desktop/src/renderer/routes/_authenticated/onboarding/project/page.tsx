@@ -13,6 +13,7 @@ import {
 } from "react-icons/lu";
 import { showStarNagOnboardingToast } from "renderer/components/StarNagToast";
 import { useOpenNewWorkspaceForLocalProject } from "renderer/hooks/useOpenNewWorkspace";
+import { useShortkitRendererReady } from "renderer/hooks/useShortkitRendererReady";
 import { track } from "renderer/lib/analytics";
 import { apiTrpcClient } from "renderer/lib/api-trpc-client";
 import { authClient } from "renderer/lib/auth-client";
@@ -249,6 +250,7 @@ function OnboardingProjectPage() {
 		onImported: finish,
 	});
 
+	useShortkitRendererReady(true);
 	return (
 		<div className="flex flex-col gap-3">
 			{gitMissing && (

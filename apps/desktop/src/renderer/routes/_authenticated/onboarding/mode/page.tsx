@@ -2,6 +2,7 @@ import { useLingui } from "@lingui/react/macro";
 import { toast } from "@superset/ui/sonner";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
+import { useShortkitRendererReady } from "renderer/hooks/useShortkitRendererReady";
 import { track } from "renderer/lib/analytics";
 import { cloudTrpc } from "renderer/lib/cloud-trpc";
 import { type AgentMode, useAgentModeStore } from "../stores/agentModeStore";
@@ -54,6 +55,7 @@ function OnboardingModePage() {
 		if (mode !== picked) save(mode, "user");
 	};
 
+	useShortkitRendererReady(true);
 	return (
 		<fieldset className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
 			<legend className="sr-only">
