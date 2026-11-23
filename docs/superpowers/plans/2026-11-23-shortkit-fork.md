@@ -32,8 +32,8 @@
 - [x] Disable official update feed only in the fork build.
 - [x] Ensure home, profile, protocol, CLI routing and agent provisioning are isolated.
 - [x] Add appropriate focused tests for fork-specific logic; verify failures then passes.
-- [ ] Build an arm64 app and inspect packaged identity, runtime dependencies and update behavior.
-- [ ] Install and launch build A; verify real hosted sign-in and separate host.
+- [x] Build an arm64 app and inspect packaged identity, runtime dependencies and update behavior.
+- [x] Install and launch build A; verify real hosted sign-in and separate host.
 
 ## Task 2: Local update helper
 
@@ -44,12 +44,13 @@
 
 ## Task 3: Live self-development acceptance
 
-- [ ] Register shortkit/Paradev in the fork using its CLI, and create a separate feature worktree.
-- [ ] Launch a Codex agent through that CLI to make a small visible change and commit it.
-- [ ] Build B from the committed change, then start a second Codex session and a heartbeat command in fork terminals.
-- [ ] Record terminal IDs, PIDs, continuous output and build A screenshot.
-- [ ] Apply B while test terminals run; verify same live processes, reattachment, changed UI, and agent follow-up.
-- [ ] Reject an invalid candidate without affecting running app; exercise compatible app recovery and reapply B.
+- [x] Register shortkit/Paradev in the fork using its CLI, and create a separate feature worktree.
+- [x] Launch a Codex agent through that CLI to make a small visible change and commit it.
+- [x] Build B from the committed change, then start a second Codex session and a heartbeat command in fork terminals.
+- [x] Record terminal IDs, PIDs and continuous output.
+- [x] Apply B while test terminals run; verify same live processes, reattachment and agent follow-up.
+- [ ] Visually inspect the changed UI; native automation is unavailable and no screenshot is claimed.
+- [x] Reject an invalid candidate without affecting running app; exercise compatible app recovery and reapply B.
 - [ ] Save concise verification evidence and a repeatable user workflow; commit and push fork branch only after review.
 
 ## Progress
@@ -57,3 +58,5 @@
 Fork created and transferred to shortkit organization. Clone /Users/michaelseleman/paradev-fork. Origin points to shortkit/Paradev; upstream points to ParadevAI/Paradev. Bootstrap workspace created through the installed Paradev CLI, id e1f4d1c3-d08e-4ed3-ad5f-9e8bcf8932d1. Toolchain Bun 1.4.3 installed privately under ~/.local/share/paradev-fork/toolchain; global Bun unchanged.
 
 Fork code and fixture coverage are in this worktree. The build, apply, and recovery commands are documented in `scripts/shortkit/README.md`. Packaged verification and live acceptance belong to the coordinator.
+
+Live update, same-build reapply, compatible rollback and reapplication passed for implementation commit `d999b39b4da7e835194d9721a0da6653cf0fd9a8`. Both Codex sessions and the heartbeat retained their original PIDs, and the official app stayed running. Detailed results and limitations are in `scripts/shortkit/VERIFICATION.md`. Visual acceptance remains pending.

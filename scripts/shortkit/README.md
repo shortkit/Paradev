@@ -1,5 +1,7 @@
 # Local Paradev ShortKit updates
 
+See [verification results](VERIFICATION.md) for the tested build, live session-continuity results and outstanding visual check.
+
 The helper builds a production macOS arm64 directory bundle from a Git commit. It installs at `~/Applications/Paradev ShortKit.app`. The fork uses `dev.shortkit.paradev`, the `superset-shortkit` URL scheme, `~/.paradev-shortkit` for host data, and `~/Library/Application Support/Paradev ShortKit` for Electron. Hosted sign-in runs against the production service. The notification server uses loopback port 51742.
 
 ## Prepare a build
