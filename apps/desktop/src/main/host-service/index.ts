@@ -34,6 +34,7 @@ import {
 	writeManifest,
 } from "main/lib/host-service-manifest";
 import { pollHealthCheck } from "main/lib/host-service-utils";
+import { shortkitCommit } from "shared/shortkit-build";
 import { env } from "./env";
 import { createShutdown } from "./shutdown";
 
@@ -108,25 +109,43 @@ async function main(): Promise<void> {
 		apiUrl: env.SUPERSET_API_URL,
 	});
 
-	const { app, injectWebSocket, api, db, dispose, recordUnfinishedChats } =
-		createApp({
-			config: {
+	const {
+		app,
+		injectWebSocket,
+		api,
+		db,
+		dispose,
+		recordUnfinishedChats,
+		hasActiveChats,
+	} = createApp({
+		config: {
+			organizationId: env.ORGANIZATION_ID,
+			dbPath: env.HOST_DB_PATH,
+			cloudApiUrl: env.SUPERSET_API_URL,
+			migrationsFolder: env.HOST_MIGRATIONS_FOLDER,
+			allowedOrigins: [
+				`http://localhost:${env.DESKTOP_VITE_PORT}`,
+				`http://127.0.0.1:${env.DESKTOP_VITE_PORT}`,
+			],
+			browserBridge: resolveBrowserBridgeFromEnv(env),
+		},
+		providers: {
+			auth: authProvider,
+			hostAuth: new PskHostAuthProvider(env.HOST_SERVICE_SECRET),
+			credentials: new LocalGitCredentialProvider(),
+		},
+	});
+	if (shortkitCommit) {
+		// /desktop/* already requires this host's credential.
+		app.get("/desktop/shortkit-update", (c) =>
+			c.json({
+				commit: shortkitCommit,
+				activeChats: hasActiveChats(),
+				pid: process.pid,
 				organizationId: env.ORGANIZATION_ID,
-				dbPath: env.HOST_DB_PATH,
-				cloudApiUrl: env.SUPERSET_API_URL,
-				migrationsFolder: env.HOST_MIGRATIONS_FOLDER,
-				allowedOrigins: [
-					`http://localhost:${env.DESKTOP_VITE_PORT}`,
-					`http://127.0.0.1:${env.DESKTOP_VITE_PORT}`,
-				],
-				browserBridge: resolveBrowserBridgeFromEnv(env),
-			},
-			providers: {
-				auth: authProvider,
-				hostAuth: new PskHostAuthProvider(env.HOST_SERVICE_SECRET),
-				credentials: new LocalGitCredentialProvider(),
-			},
-		});
+			}),
+		);
+	}
 	disposeRef.current = dispose;
 	recordUnfinishedChatsRef.current = recordUnfinishedChats;
 

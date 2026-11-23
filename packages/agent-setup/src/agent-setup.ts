@@ -63,6 +63,7 @@ import { createArtifactGuardScript } from "./artifact-guard-hook";
 import { resolveDisabledSkillIds } from "./disabled-skills";
 import { createManagedSkills } from "./managed-skills";
 import { createNotifyScript } from "./notify-hook";
+import { isShortkitHome } from "./paths";
 
 type LabeledAction = readonly [label: string, action: () => void];
 
@@ -227,6 +228,13 @@ export function setupAgentCapabilities({
 	disabledSkillIds = [],
 }: SetupAgentCapabilitiesOptions = {}): void {
 	const disabled = new Set(disabledAgentIds);
+	if (isShortkitHome()) {
+		runSetupAction("notify-script", createNotifyScript);
+		runSetupAction("artifact-guard-script", createArtifactGuardScript);
+		if (!disabled.has("codex")) runSetupAction("codex", createCodexWrapper);
+		if (!disabled.has("claude")) runSetupAction("claude", createClaudeWrapper);
+		return;
+	}
 	const failed: string[] = [];
 	for (const [label, action] of BOOTSTRAP_SETUP) {
 		if (!runSetupAction(label, action)) failed.push(label);
@@ -264,6 +272,12 @@ export function setupAgentCapabilities({
 export function setupSingleAgent(agentId: string): boolean {
 	const definition = AGENT_SETUP_DEFINITIONS[agentId as AgentSetupTargetId];
 	if (!definition) return false;
+	if (isShortkitHome()) {
+		if (agentId === "codex") return runSetupAction(agentId, createCodexWrapper);
+		if (agentId === "claude")
+			return runSetupAction(agentId, createClaudeWrapper);
+		return true;
+	}
 	const failed: string[] = [];
 	for (const [label, action] of BOOTSTRAP_SETUP) {
 		if (!runSetupAction(label, action)) failed.push(label);
@@ -293,6 +307,7 @@ export function setupSingleAgent(agentId: string): boolean {
 export function teardownSingleAgent(agentId: string): boolean {
 	const definition = AGENT_SETUP_DEFINITIONS[agentId as AgentSetupTargetId];
 	if (!definition) return false;
+	if (isShortkitHome()) return true;
 	const failed: string[] = [];
 	runAgentActions(agentId, definition.teardown, failed);
 	warnOnFailures(failed);

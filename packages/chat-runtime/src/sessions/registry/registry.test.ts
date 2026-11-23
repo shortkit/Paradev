@@ -40,6 +40,16 @@ function createSession(runtime: ReturnType<typeof createTestRuntime>): string {
 }
 
 describe("LiveSessionRegistry", () => {
+	test("an update sees a starting chat even before the harness assigns a session id", async () => {
+		const runtime = createTestRuntime({ harnesses: registryOf(idleAdapter) });
+		expect(runtime.live.hasActiveWork()).toBe(false);
+		const sessionId = createSession(runtime);
+		expect(runtime.live.hasActiveWork()).toBe(true);
+		await runtime.live.dispose(sessionId);
+		expect(runtime.live.hasActiveWork()).toBe(false);
+		await runtime.dispose();
+	});
+
 	test("refuses to replace a session that is already running", async () => {
 		const runtime = createTestRuntime({ harnesses: registryOf(idleAdapter) });
 		const sessionId = createSession(runtime);

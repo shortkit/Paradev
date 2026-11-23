@@ -1,5 +1,6 @@
 import os from "node:os";
 import { setTimeout as wait } from "node:timers/promises";
+import { isShortkitHome } from "@superset/agent-setup/paths";
 import { getHostId, getHostName } from "@superset/shared/host-info";
 import { buildHostRoutingKey } from "@superset/shared/host-routing";
 import { getHostInstallSource, HOST_SERVICE_VERSION } from "../install-source";
@@ -50,6 +51,7 @@ const REGISTER_RETRY_MAX_MS = 5 * 60_000;
 export async function connectRelay(
 	options: ConnectRelayOptions,
 ): Promise<TunnelClient | null> {
+	if (isShortkitHome()) return null;
 	// Registration is what makes this host exist server-side (hosts list,
 	// automations, relay routing). A one-shot attempt left a transient API
 	// failure at boot permanently stranding the host as locally-healthy but

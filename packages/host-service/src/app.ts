@@ -139,6 +139,7 @@ export interface CreateAppResult {
 	launchSandboxAgent: () => Promise<void>;
 	resumeCrashedAgents: () => Promise<void>;
 	recordUnfinishedChats: () => void;
+	hasActiveChats: () => boolean;
 	readLinkedPullRequests: () => Promise<
 		{ repository: string; number: number; linkedAt: number }[]
 	>;
@@ -714,6 +715,8 @@ export function createApp(options: CreateAppOptions): CreateAppResult {
 		eventBus,
 		launchSandboxAgent,
 		resumeCrashedAgents,
+		hasActiveChats: () =>
+			chatV3.existingRuntime()?.live.hasActiveWork() ?? false,
 		recordUnfinishedChats: () => {
 			try {
 				chatV3.recordUnfinished();

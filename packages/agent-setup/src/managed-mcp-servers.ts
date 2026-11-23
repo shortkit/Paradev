@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
 	type ExternalMcpServer,
@@ -13,7 +12,11 @@ import {
 	type ManagedTomlBlockSpec,
 	removeManagedTomlBlock,
 } from "./managed-toml-block";
-import { resolveAppHomeDir } from "./paths";
+import {
+	isShortkitHome,
+	provisioningHomeDir,
+	resolveAppHomeDir,
+} from "./paths";
 
 /**
  * Materializes the MCP servers of installed Superset plugins into agent
@@ -48,10 +51,12 @@ export interface SyncManagedMcpServersOptions {
 export function getPdevMcpConfigPath(
 	options: SyncManagedMcpServersOptions = {},
 ): string {
-	const homeDir = options.homeDir ?? os.homedir();
+	const homeDir = options.homeDir ?? provisioningHomeDir();
 	const override =
 		options.pdevAgentDir ||
-		(options.homeDir ? undefined : process.env.PDEV_CODING_AGENT_DIR);
+		(options.homeDir || isShortkitHome()
+			? undefined
+			: process.env.PDEV_CODING_AGENT_DIR);
 	const agentDir = override || path.join(homeDir, ".paradev", "agent");
 	const expanded =
 		agentDir === "~"
@@ -353,7 +358,7 @@ function codexMcpSpec(
 export function readExternallyConfiguredMcpServers(
 	options: SyncManagedMcpServersOptions = {},
 ): ExternalMcpServer[] {
-	const homeDir = options.homeDir ?? os.homedir();
+	const homeDir = options.homeDir ?? provisioningHomeDir();
 	const supersetHomeDir = options.supersetHomeDir ?? resolveAppHomeDir();
 	const ledger = readLedger(supersetHomeDir);
 	const bySourceAndName = new Map<string, ExternalMcpServer>();
@@ -532,7 +537,7 @@ export function syncManagedMcpServers(
 	desired: Record<string, PluginMcpServerConfig>,
 	options: SyncManagedMcpServersOptions = {},
 ): void {
-	const homeDir = options.homeDir ?? os.homedir();
+	const homeDir = options.homeDir ?? provisioningHomeDir();
 	const supersetHomeDir = options.supersetHomeDir ?? resolveAppHomeDir();
 	const scoped = getDesiredMcpServersByAgent(desired, options);
 	const errors: unknown[] = [];

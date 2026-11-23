@@ -1,3 +1,4 @@
+import "./lib/shortkit-environment";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -41,6 +42,7 @@ import {
 	PLATFORM,
 	PROTOCOL_SCHEME,
 } from "shared/constants";
+import { shortkitCommit } from "shared/shortkit-build";
 import { sweepDevAppProfiles } from "./dev-app-profile-sweep";
 import { getAppDisplayName } from "./lib/app-display-name";
 import { initAppState } from "./lib/app-state";
@@ -77,7 +79,6 @@ import { localDb } from "./lib/local-db";
 import { requestLocalNetworkAccess } from "./lib/local-network-permission";
 import { menuEmitter } from "./lib/menu-events";
 import { allowRendererToReachDeviceHub } from "./lib/mobile-hub-origin";
-
 import {
 	adoptDesktopInstalls,
 	finishPendingOrganizationForget,
@@ -88,6 +89,7 @@ import { ensureProjectIconsDir, getProjectIconPath } from "./lib/project-icons";
 import { runQuitCleanup } from "./lib/quit-sequence";
 import { startResourceJournal } from "./lib/resource-metrics/resource-journal";
 import { initSentry } from "./lib/sentry";
+import { startShortkitUpdateControl } from "./lib/shortkit-update-control";
 import { stopPtyDaemons } from "./lib/stop-pty-daemons";
 import { stopMigratedV1SessionsOnBoot } from "./lib/terminal";
 import { readMigratedV1WorkspaceIds } from "./lib/terminal/stop-v1-sessions/migrated-v1-workspaces";
@@ -757,5 +759,8 @@ if (!gotTheLock) {
 		}
 
 		appReady = true;
+		if (shortkitCommit) {
+			startShortkitUpdateControl(hostServiceCoordinator, loadToken, quitApp);
+		}
 	})();
 }

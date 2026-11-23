@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { PluginMcpServerConfig } from "@superset/shared/plugins";
 import {
@@ -12,7 +11,7 @@ import {
 	syncManagedMcpServers,
 	toJsonMcpServerValue,
 } from "./managed-mcp-servers";
-import { resolveAppHomeDir } from "./paths";
+import { provisioningHomeDir, resolveAppHomeDir } from "./paths";
 
 export interface McpReconcileReport {
 	agent: "claude" | "codex" | "pdev";
@@ -116,7 +115,7 @@ export function reconcileMcpServers(
 	desired: Record<string, PluginMcpServerConfig>,
 	options: SyncManagedMcpServersOptions = {},
 ): McpReconcileReport[] {
-	const homeDir = options.homeDir ?? os.homedir();
+	const homeDir = options.homeDir ?? provisioningHomeDir();
 	const supersetHomeDir = options.supersetHomeDir ?? resolveAppHomeDir();
 	const scoped = getDesiredMcpServersByAgent(desired, options);
 

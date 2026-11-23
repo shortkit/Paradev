@@ -58,6 +58,9 @@ export default defineConfig({
 		plugins: [linguiMacroPlugin(), copyResourcesPlugin()],
 
 		define: {
+			"process.env.SHORTKIT_BUILD_COMMIT": JSON.stringify(
+				process.env.SHORTKIT_BUILD_COMMIT || "",
+			),
 			"process.env.NODE_ENV": defineEnv(process.env.NODE_ENV, "production"),
 			"process.env.SKIP_ENV_VALIDATION": defineEnv(
 				process.env.SKIP_ENV_VALIDATION,
@@ -183,6 +186,9 @@ export default defineConfig({
 
 	renderer: {
 		define: {
+			"process.env.SHORTKIT_BUILD_COMMIT": JSON.stringify(
+				process.env.SHORTKIT_BUILD_COMMIT || "",
+			),
 			"process.env.NODE_ENV": defineEnv(process.env.NODE_ENV),
 			"process.env.SKIP_ENV_VALIDATION": defineEnv(
 				process.env.SKIP_ENV_VALIDATION,

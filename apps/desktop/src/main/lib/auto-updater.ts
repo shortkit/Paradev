@@ -23,6 +23,7 @@ import {
 	type AutoUpdateStatusEvent,
 } from "shared/auto-update";
 import { PLATFORM } from "shared/constants";
+import { shortkitCommit } from "shared/shortkit-build";
 
 // electron-updater's internal cache only self-invalidates when the remote
 // sha512 differs from cached metadata, so a corrupt cached download (e.g.
@@ -197,7 +198,7 @@ export function getUpdateStatus(): AutoUpdateStatusEvent {
 }
 
 export function isUpdateReadyToInstall(): boolean {
-	return isInstalling || stagedVersion !== undefined;
+	return !shortkitCommit && (isInstalling || stagedVersion !== undefined);
 }
 
 export function isInstallingUpdate(): boolean {
@@ -205,6 +206,7 @@ export function isInstallingUpdate(): boolean {
 }
 
 export function installUpdate(): void {
+	if (shortkitCommit) return;
 	if (env.NODE_ENV === "development") {
 		// Simulate the real lifecycle so the renderer can be previewed with the
 		// simulate* mutations: installing lingers, then the post-update
@@ -327,6 +329,7 @@ function showUpdateStagedDialog(): void {
 }
 
 export function checkForUpdates(): void {
+	if (shortkitCommit) return;
 	if (env.NODE_ENV === "development" || !IS_AUTO_UPDATE_PLATFORM) {
 		return;
 	}
@@ -364,6 +367,7 @@ export function checkForUpdates(): void {
 }
 
 export function checkForUpdatesInteractive(): void {
+	if (shortkitCommit) return;
 	if (env.NODE_ENV === "development") {
 		dialog.showMessageBox({
 			type: "info",
@@ -540,6 +544,11 @@ export function simulateError(): void {
 }
 
 export function setupAutoUpdater(): void {
+	if (shortkitCommit) {
+		autoUpdater.autoDownload = false;
+		autoUpdater.autoInstallOnAppQuit = false;
+		return;
+	}
 	if (env.NODE_ENV === "development" || !IS_AUTO_UPDATE_PLATFORM) {
 		return;
 	}

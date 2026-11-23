@@ -5,6 +5,7 @@ import { useState } from "react";
 import { GATED_FEATURES, usePaywall } from "renderer/components/Paywall";
 import { electronTrpc } from "renderer/lib/electron-trpc";
 import { ExposeViaRelayConfirmDialog } from "renderer/routes/_authenticated/components/ExposeViaRelayConfirmDialog";
+import { shortkitCommit } from "shared/shortkit-build";
 
 interface RemoteAccessSwitchProps {
 	id: string;
@@ -87,7 +88,7 @@ export function RemoteAccessSwitch({ id }: RemoteAccessSwitchProps) {
 				id={id}
 				checked={exposeEnabled ?? false}
 				onCheckedChange={handleChange}
-				disabled={isLoading || setExpose.isPending}
+				disabled={!!shortkitCommit || isLoading || setExpose.isPending}
 			/>
 			<ExposeViaRelayConfirmDialog
 				open={confirmOpen}

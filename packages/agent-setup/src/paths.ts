@@ -2,6 +2,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+export const SHORTKIT_HOME_NAME = ".paradev-shortkit";
+
+export function isShortkitHome(): boolean {
+	return (
+		resolveAppHomeDir() === path.join(resolveUserHomeDir(), SHORTKIT_HOME_NAME)
+	);
+}
+
+export function provisioningHomeDir(): string {
+	return isShortkitHome()
+		? path.join(resolveAppHomeDir(), "agent-config")
+		: os.homedir();
+}
+
 export const APP_HOME_DIR_NAME = ".paradev";
 
 /**

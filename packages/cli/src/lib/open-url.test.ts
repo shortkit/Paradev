@@ -10,3 +10,16 @@ test("workspaceLinks gives the deep link and the web handoff link on SUPERSET_WE
 	expect(web.origin).toBe(new URL(env.SUPERSET_WEB_URL).origin);
 	expect(web.pathname).toBe(`/workspaces/${id}`);
 });
+
+test("fork CLI workspace links open the fork", () => {
+	const home = process.env.SUPERSET_HOME_DIR;
+	try {
+		process.env.SUPERSET_HOME_DIR = `${process.env.HOME}/.paradev-shortkit`;
+		expect(workspaceLinks("workspace").url).toBe(
+			"superset-shortkit://v2-workspace/workspace",
+		);
+	} finally {
+		if (home === undefined) delete process.env.SUPERSET_HOME_DIR;
+		else process.env.SUPERSET_HOME_DIR = home;
+	}
+});

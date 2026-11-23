@@ -11,6 +11,7 @@ import {
 import path from "node:path";
 import { getBinDir } from "@superset/agent-setup/paths";
 import { app } from "electron";
+import { shortkitEnvironment } from "./shortkit-environment";
 
 export const BUNDLED_CLI_SHIM_MARKER = "# Superset bundled CLI shim v1";
 const SHIM_HEADER_BYTES = 2048;
@@ -78,7 +79,26 @@ function devStackAddresses(): ShimEnv {
 export function buildBundledCliShim(
 	bundledCliPath: string,
 	platform: NodeJS.Platform = process.platform,
+	fork = shortkitEnvironment,
 ): string {
+	if (fork) {
+		const crossProfile = `if [ "\${SUPERSET_HOME_DIR:-}" != ${quoteShellLiteral(fork.home)} ]; then
+	unset SUPERSET_ORGANIZATION_ID SUPERSET_WORKSPACE_ID SUPERSET_WORKSPACE_NAME SUPERSET_WORKSPACE_PATH SUPERSET_PROJECT_ID SUPERSET_AGENT_ID SUPERSET_PANE_ID SUPERSET_TERMINAL_ID SUPERSET_TAB_ID SUPERSET_SANDBOX_WORKSPACE_ID
+	unset SUPERSET_ROOT_PATH SUPERSET_ENV SUPERSET_HOST_SERVICE_URL SUPERSET_HOST_SERVICE_TOKEN SUPERSET_HOST_URL SUPERSET_HOST_TOKEN SUPERSET_HOST_SERVICE_PORT SUPERSET_HOST_SERVICE_SECRET
+	unset SUPERSET_API_KEY SUPERSET_API_URL SUPERSET_WEB_URL SUPERSET_AUTH_CONFIG_PATH SUPERSET_HOST_AGENT_HOOK_URL SUPERSET_HOST_AGENT_HOOK_TOKEN SUPERSET_ACCOUNT_ATTRIBUTION_TOKEN SUPERSET_HOST_BIN
+	unset HOST_SERVICE_SECRET HOST_SERVICE_PORT AUTH_TOKEN ORGANIZATION_ID RELAY_URL REALTIME_URL
+fi
+`;
+		return buildShim(
+			bundledCliPath,
+			platform,
+			[
+				["SUPERSET_HOME_DIR", fork.home],
+				["HOST_CLIENT_ID", fork.hostId],
+			],
+			crossProfile,
+		);
+	}
 	return buildShim(bundledCliPath, platform, devStackAddresses());
 }
 
@@ -93,6 +113,7 @@ function buildShim(
 	binaryPath: string,
 	platform: NodeJS.Platform,
 	env: ShimEnv,
+	prelude = "",
 ): string {
 	if (platform === "win32") {
 		const sets = env.map(([key, value]) => `set ${key}=${value}\r\n`).join("");
@@ -106,7 +127,7 @@ function buildShim(
 		.join("");
 	return `#!/bin/sh
 ${BUNDLED_CLI_SHIM_MARKER}
-${exports}exec ${quoteShellLiteral(binaryPath)} "$@"
+${prelude}${exports}exec ${quoteShellLiteral(binaryPath)} "$@"
 `;
 }
 

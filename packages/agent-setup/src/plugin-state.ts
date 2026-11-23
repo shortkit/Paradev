@@ -1,11 +1,10 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
 	type InstalledPluginEntry,
 	installedPluginsFilePath,
 } from "./installed-plugins";
-import { resolveAppHomeDir } from "./paths";
+import { provisioningHomeDir, resolveAppHomeDir } from "./paths";
 import { PluginError } from "./plugin-error";
 import { MARKETPLACE_FILE, type Marketplace } from "./plugin-marketplace";
 import { writeFileIfChanged } from "./write-file-if-changed";
@@ -28,7 +27,7 @@ export function pluginsRoot(): string {
 }
 
 export function skillsRoot(): string {
-	return path.join(os.homedir(), ".agents", "skills");
+	return path.join(provisioningHomeDir(), ".agents", "skills");
 }
 
 export function marketplacesDir(): string {

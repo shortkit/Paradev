@@ -1,3 +1,4 @@
+import "./shortkit-environment";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { moveLegacyAppHome } from "@superset/agent-setup/legacy-home-move";

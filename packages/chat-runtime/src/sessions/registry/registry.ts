@@ -201,6 +201,21 @@ export class LiveSessionRegistry {
 		}
 	}
 
+	hasActiveWork(): boolean {
+		for (const session of this.live.values()) {
+			if (
+				session.busy ||
+				session.queuedCount ||
+				session.state.status === "starting" ||
+				session.state.status === "running" ||
+				session.state.status === "awaiting_input" ||
+				session.state.backgroundTasks?.length
+			)
+				return true;
+		}
+		return false;
+	}
+
 	/** Whether any chat working in `cwd` has a turn running or about to. */
 	busyIn(cwd: string): boolean {
 		for (const session of this.live.values()) {

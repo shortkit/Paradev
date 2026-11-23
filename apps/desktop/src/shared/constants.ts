@@ -1,5 +1,6 @@
 import { PROTOCOL_SCHEMES } from "@superset/shared/constants";
 import { getWorkspaceName } from "./env.shared";
+import { shortkitCommit } from "./shortkit-build";
 
 export const PLATFORM = {
 	IS_MAC: process.platform === "darwin",
@@ -8,9 +9,11 @@ export const PLATFORM = {
 };
 
 const workspace = getWorkspaceName();
-export const PROTOCOL_SCHEME = workspace
-	? `superset-${workspace}`
-	: PROTOCOL_SCHEMES.PROD;
+export const PROTOCOL_SCHEME = shortkitCommit
+	? "superset-shortkit"
+	: workspace
+		? `superset-${workspace}`
+		: PROTOCOL_SCHEMES.PROD;
 /** Height of the Windows/Linux window-controls overlay the window opens with. */
 export const TITLE_BAR_OVERLAY_HEIGHT = 40;
 

@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import { copyFile, mkdir, rm } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { writeFileIfChanged } from "./agent-wrappers-common";
 import { getBundledPluginDir } from "./config";
 import { readInstalledPluginSources } from "./installed-plugins";
+import { provisioningHomeDir } from "./paths";
 
 export const MANAGED_SKILL_MARKER = "<!-- superset-managed-skill v1 -->";
 
@@ -400,7 +400,7 @@ export function createManagedSkills(
 async function provisionManagedSkills(
 	options: ManagedSkillsOptions,
 ): Promise<void> {
-	const homeDir = options.homeDir ?? os.homedir();
+	const homeDir = options.homeDir ?? provisioningHomeDir();
 	const bundledPluginDir = options.templatesDir
 		? path.join(options.templatesDir, "plugin")
 		: getBundledPluginDir();

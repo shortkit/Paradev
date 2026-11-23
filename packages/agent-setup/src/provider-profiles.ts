@@ -23,6 +23,7 @@ import {
 } from "./agent-wrappers-claude-codex-opencode";
 import { resolveDisabledSkillIds } from "./disabled-skills";
 import { provisionManagedClaudePluginAt } from "./managed-skills";
+import { isShortkitHome } from "./paths";
 import {
 	linkSharedDir,
 	mergeSharedJsonKeys,
@@ -180,7 +181,7 @@ export async function provisionClaudeProfile(
 	const defaultDir = path.join(homeDir, ".claude");
 	const target = path.resolve(configDir);
 	const surfaces: Record<string, SurfaceOutcome> = {};
-	if (isProtectedTarget(target, homeDir, defaultDir)) {
+	if (isShortkitHome() || isProtectedTarget(target, homeDir, defaultDir)) {
 		return { configDir: target, surfaces };
 	}
 
@@ -310,7 +311,7 @@ export async function provisionCodexProfile(
 	const defaultDir = defaultCodexHome(homeDir, options.homeDir !== undefined);
 	const target = path.resolve(home);
 	const surfaces: Record<string, SurfaceOutcome> = {};
-	if (isProtectedTarget(target, homeDir, defaultDir)) {
+	if (isShortkitHome() || isProtectedTarget(target, homeDir, defaultDir)) {
 		return { configDir: target, surfaces };
 	}
 

@@ -16,6 +16,7 @@ import { eq } from "drizzle-orm";
 import { app, dialog } from "electron";
 import log from "electron-log/main";
 import { env as sharedEnv } from "shared/env.shared";
+import { shortkitCommit } from "shared/shortkit-build";
 import { getProcessEnvWithShellPath } from "../../lib/trpc/routers/utils/shell-env";
 import { env as mainEnv } from "../env.main";
 import { SUPERSET_HOME_DIR } from "./app-environment";
@@ -1147,7 +1148,7 @@ export class HostServiceCoordinator extends EventEmitter {
 		// only the child's fallback; it asks the API for the relay once
 		// authenticated.
 		const effectiveRelayUrl = mainEnv.RELAY_URL;
-		if (exposeViaRelay && effectiveRelayUrl) {
+		if (!shortkitCommit && exposeViaRelay && effectiveRelayUrl) {
 			childEnv.RELAY_URL = effectiveRelayUrl;
 		} else {
 			delete childEnv.RELAY_URL;

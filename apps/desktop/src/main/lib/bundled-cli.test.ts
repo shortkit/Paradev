@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { execFileSync } from "node:child_process";
 import {
 	chmodSync,
 	existsSync,
@@ -55,6 +56,88 @@ describe("bundled CLI", () => {
 		expect(shim).toContain(
 			`exec '/Applications/Superset Test.app/Contents/Resources/bin/super'"'"'set' "$@"`,
 		);
+	});
+
+	it("routes a fork shim from a stock shell and preserves the fork's own terminal context", () => {
+		const forkHome = path.join(tempDir, ".paradev-shortkit");
+		const shim = path.join(tempDir, "shim");
+		writeFileSync(
+			bundledCliPath,
+			'#!/bin/sh\nprintf "%s|" "$SUPERSET_HOME_DIR" "$HOST_CLIENT_ID" "$SUPERSET_WORKSPACE_ID" "$SUPERSET_API_KEY" "$HOST_SERVICE_SECRET"',
+		);
+		writeFileSync(
+			shim,
+			buildBundledCliShim(bundledCliPath, "darwin", {
+				home: forkHome,
+				hostId: "fork-id",
+			}),
+			{ mode: 0o755 },
+		);
+		const call = (home: string) =>
+			execFileSync(shim, {
+				encoding: "utf8",
+				env: {
+					SUPERSET_HOME_DIR: home,
+					HOST_CLIENT_ID: "inherited-id",
+					SUPERSET_WORKSPACE_ID: "workspace",
+					SUPERSET_API_KEY: "account",
+					HOST_SERVICE_SECRET: "host",
+				},
+			});
+		expect(call("/stock")).toBe(`${forkHome}|fork-id||||`);
+		expect(call(forkHome)).toBe(`${forkHome}|fork-id|workspace|account|host|`);
+	});
+
+	it("resolves --local with the fork host id and manifest", () => {
+		const home = path.join(tempDir, "fork");
+		const orgDirectory = path.join(home, "host", "my-org");
+		mkdirSync(orgDirectory, { recursive: true });
+		writeFileSync(
+			path.join(orgDirectory, "manifest.json"),
+			JSON.stringify({
+				pid: process.pid,
+				endpoint: "http://127.0.0.1:54321",
+				authToken: "fixture",
+				organizationId: "my-org",
+				startedAt: Date.now(),
+			}),
+		);
+		const shim = path.join(tempDir, "superset");
+		writeFileSync(
+			shim,
+			buildBundledCliShim(process.execPath, "darwin", {
+				home,
+				hostId: "fork-id",
+			}),
+			{ mode: 0o755 },
+		);
+		const result = execFileSync(
+			shim,
+			[
+				"-e",
+				`
+			import { requireHostTarget } from "./src/lib/host-target/resolveHostFlags.ts";
+			import { resolveHostTarget } from "./src/lib/host-target/resolveHostTarget.ts";
+			const local = requireHostTarget({local:true});
+			const {kind, hostId, ws} = await resolveHostTarget({requestedHostId:local, organizationId:"my-org", userJwt:""});
+			console.log(JSON.stringify({kind, hostId, ws}));
+		`,
+			],
+			{
+				cwd: path.resolve(import.meta.dir, "../../../../../packages/cli"),
+				encoding: "utf8",
+				env: {
+					PATH: process.env.PATH,
+					SUPERSET_HOME_DIR: path.join(tempDir, "stock"),
+					HOST_CLIENT_ID: "stock-id",
+				},
+			},
+		);
+		expect(JSON.parse(result)).toEqual({
+			kind: "local",
+			hostId: "fork-id",
+			ws: { baseWsUrl: "ws://127.0.0.1:54321", token: "fixture" },
+		});
 	});
 
 	it("installs an executable managed shim into the terminal bin directory", () => {

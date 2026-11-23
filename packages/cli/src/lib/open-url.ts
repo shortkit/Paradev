@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { isShortkitHome } from "@superset/agent-setup/paths";
 import { env } from "./env";
 
 /**
@@ -20,7 +21,8 @@ export function desktopWorkspaceLink(
 	options?: { sessionId?: string },
 ): string {
 	// Desktops before the route rename only know v2-workspace; newer ones rewrite it.
-	const base = `superset://v2-workspace/${workspaceId}`;
+	const scheme = isShortkitHome() ? "superset-shortkit" : "superset";
+	const base = `${scheme}://v2-workspace/${workspaceId}`;
 	if (!options?.sessionId) return base;
 	const params = new URLSearchParams({ sessionId: options.sessionId });
 	return `${base}?${params.toString()}`;
