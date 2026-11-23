@@ -13,6 +13,7 @@ import {
 	provisionCodexProfile,
 	resolveAmbientCodexHome,
 } from "@superset/agent-setup";
+import { isShortkitHome } from "@superset/agent-setup/paths";
 import type { HostDb } from "../../../db/index.ts";
 import {
 	getDefaultAccountSelections,
@@ -29,6 +30,7 @@ import {
  * config surfaces agent-setup owns (skills, plugins, settings, MCP servers).
  */
 export async function provisionClaudeAccount(configDir: string): Promise<void> {
+	if (isShortkitHome()) return;
 	shareClaudeSessionState(configDir, join(homedir(), ".claude"));
 	await provisionClaudeProfile(configDir);
 }
@@ -40,6 +42,7 @@ export async function provisionClaudeAccount(configDir: string): Promise<void> {
  * default, so the account the UI labels default is the one sessions pool into.
  */
 export async function provisionCodexAccount(codexHome: string): Promise<void> {
+	if (isShortkitHome()) return;
 	shareCodexSessionState(codexHome, resolveAmbientCodexHome());
 	await provisionCodexProfile(codexHome);
 }

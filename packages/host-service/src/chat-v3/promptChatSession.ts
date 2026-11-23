@@ -20,14 +20,16 @@ export async function promptChatSession({
 			throw new Error("The chat's agent is no longer running");
 		}
 	};
-	assertRunning();
-	const delivery = await acquireDelivery();
-	if (!delivery?.isValid()) throw new Error("Delivery ownership changed");
-	assertRunning();
-	runtime.commands.prompt({
-		commandId: randomUUID(),
-		sessionId: chatSessionId,
-		clientId: randomUUID(),
-		content: [{ type: "text", text }],
+	await runtime.live.runNativeOperation(async () => {
+		assertRunning();
+		const delivery = await acquireDelivery();
+		if (!delivery?.isValid()) throw new Error("Delivery ownership changed");
+		assertRunning();
+		runtime.commands.prompt({
+			commandId: randomUUID(),
+			sessionId: chatSessionId,
+			clientId: randomUUID(),
+			content: [{ type: "text", text }],
+		});
 	});
 }

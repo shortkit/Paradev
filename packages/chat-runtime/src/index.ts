@@ -37,6 +37,7 @@ export type ChatRuntimeOptions = {
 	onSessionChanged?: ChatJournalOptions["onSessionChanged"];
 	onAppend?: ChatJournalOptions["onAppend"];
 	usageLimitGraceMs?: number;
+	assertChatAdmission?: () => void;
 };
 
 export type ChatRuntime = {
@@ -76,6 +77,7 @@ export function createChatRuntime(options: ChatRuntimeOptions): ChatRuntime {
 		publish: (envelope) => subscriptions.publish(envelope),
 		harnesses: options.harnesses ?? new Map(),
 		observer: options.observer,
+		assertChatAdmission: options.assertChatAdmission,
 		usageLimitGraceMs: options.usageLimitGraceMs,
 		checkpoints: options.checkpoints,
 	});

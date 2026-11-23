@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { AdapterEvent, HarnessAdapter } from "../../harness";
 import { FakeHarness } from "../../harness/fake";
 import { createTestRuntime } from "../../testing/testRuntime";
+import { waitFor } from "../../testing/testUtils";
 import type { HarnessRegistry } from "./registry";
 
 const HARNESS = "registry-fake";
@@ -40,6 +41,79 @@ function createSession(runtime: ReturnType<typeof createTestRuntime>): string {
 }
 
 describe("LiveSessionRegistry", () => {
+	test("a host which acknowledged idle refuses new sessions, prompts and resumed work until cancellation", async () => {
+		let held = false;
+		const runtime = createTestRuntime({
+			harnesses: registryOf(
+				() =>
+					new FakeHarness({
+						start: [{ kind: "session", session: { status: "idle" } }],
+						turns: [[]],
+					}),
+			),
+			assertChatAdmission: () => {
+				if (held) throw new Error("update in progress");
+			},
+		});
+		try {
+			const id = createSession(runtime);
+			const live = runtime.live.require(id);
+			await waitFor(() => live.state.status === "idle");
+			expect(runtime.live.hasActiveWork()).toBe(false);
+			held = true;
+			const prompt = () =>
+				runtime.commands.prompt({
+					commandId: randomUUID(),
+					sessionId: id,
+					clientId: randomUUID(),
+					content: [{ type: "text", text: "run" }],
+				});
+			expect(() => createSession(runtime)).toThrow("update in progress");
+			expect(prompt).toThrow("update in progress");
+			expect(() =>
+				live.promptOnceStarted([[{ type: "text", text: "resume" }]]),
+			).toThrow("update in progress");
+			expect(runtime.sessions.list()).toHaveLength(1);
+			held = false;
+			expect(prompt).not.toThrow();
+		} finally {
+			await runtime.dispose();
+		}
+	});
+
+	test("an in-flight native discovery counts as work and a held host cannot spawn discovery", async () => {
+		let held = false;
+		const finish = Promise.withResolvers<{
+			supported: boolean;
+			sessions: [];
+		}>();
+		const runtime = createTestRuntime({
+			assertChatAdmission: () => {
+				if (held) throw new Error("desktop update");
+			},
+			harnesses: registryOf(() =>
+				Object.assign(idleAdapter(), {
+					discoverSessions: () => finish.promise,
+				}),
+			),
+		});
+		const input = { harness: HARNESS, scopeId: "scope", cwd: "/tmp" };
+		try {
+			const discovery = runtime.live.discoverSessions(input);
+			expect(runtime.live.hasActiveWork()).toBe(true);
+			finish.resolve({ supported: true, sessions: [] });
+			await discovery;
+			expect(runtime.live.hasActiveWork()).toBe(false);
+			held = true;
+			await expect(runtime.live.discoverSessions(input)).rejects.toThrow(
+				"desktop update",
+			);
+		} finally {
+			finish.resolve({ supported: true, sessions: [] });
+			await runtime.dispose();
+		}
+	});
+
 	test("an update sees a starting chat even before the harness assigns a session id", async () => {
 		const runtime = createTestRuntime({ harnesses: registryOf(idleAdapter) });
 		expect(runtime.live.hasActiveWork()).toBe(false);

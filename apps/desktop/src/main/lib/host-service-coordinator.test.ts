@@ -269,6 +269,21 @@ describe("HostServiceCoordinator.reconcile", () => {
 		}
 	});
 
+	test("quit authorization expires if an acknowledged host is replaced on its original port", () => {
+		const host = {
+			pid: 1001,
+			port: 60000,
+			secret: "secret",
+			status: "running" as const,
+			owned: true,
+		};
+		internals.instances.set("org-1", host);
+		const snapshot = coordinator.captureUpdateHosts();
+		expect(snapshot.assertCurrent).not.toThrow();
+		internals.instances.set("org-1", { ...host, pid: 1002 });
+		expect(snapshot.assertCurrent).toThrow();
+	});
+
 	test("starts only the unique organizations in the authenticated set", async () => {
 		const startMock = mock(async (organizationId: string) => {
 			internals.instances.set(organizationId, {

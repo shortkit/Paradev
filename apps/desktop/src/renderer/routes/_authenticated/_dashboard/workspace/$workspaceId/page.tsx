@@ -12,6 +12,7 @@ import { openQuickOpen } from "renderer/commandPalette";
 import { useQuickOpenStore } from "renderer/commandPalette/ui/QuickOpen";
 import { useWorkspaceHostTarget } from "renderer/hooks/host-service/useWorkspaceHostUrl";
 import { useParadevShell } from "renderer/hooks/useParadevShell";
+import { useShortkitRendererReady } from "renderer/hooks/useShortkitRendererReady";
 import { useUserPreferences } from "renderer/hooks/useUserPreferences";
 import { useHotkey } from "renderer/hotkeys";
 import { electronTrpc } from "renderer/lib/electron-trpc";
@@ -671,6 +672,9 @@ function WorkspaceContent() {
 		/>
 	);
 
+	useShortkitRendererReady(
+		isLayoutReady && (!isRightPaneAreaEnabled || isRightLayoutReady),
+	);
 	const rightPaneArea = (
 		<RightPaneArea
 			key={workspaceId}

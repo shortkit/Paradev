@@ -6,6 +6,7 @@
  */
 
 import { serve } from "@hono/node-server";
+import { resolveAppHomeDir } from "@superset/agent-setup/paths";
 import {
 	captureFatalStartupError,
 	createApp,
@@ -35,6 +36,7 @@ import {
 } from "main/lib/host-service-manifest";
 import { pollHealthCheck } from "main/lib/host-service-utils";
 import { shortkitCommit } from "shared/shortkit-build";
+import { ShortkitChatDrain } from "../lib/shortkit-chat-drain";
 import { env } from "./env";
 import { createShutdown } from "./shutdown";
 
@@ -109,6 +111,9 @@ async function main(): Promise<void> {
 		apiUrl: env.SUPERSET_API_URL,
 	});
 
+	const drain = shortkitCommit
+		? new ShortkitChatDrain(resolveAppHomeDir())
+		: null;
 	const {
 		app,
 		injectWebSocket,
@@ -119,6 +124,7 @@ async function main(): Promise<void> {
 		hasActiveChats,
 	} = createApp({
 		config: {
+			assertChatAdmission: drain ? () => drain.assertAdmission() : undefined,
 			organizationId: env.ORGANIZATION_ID,
 			dbPath: env.HOST_DB_PATH,
 			cloudApiUrl: env.SUPERSET_API_URL,
@@ -135,16 +141,20 @@ async function main(): Promise<void> {
 			credentials: new LocalGitCredentialProvider(),
 		},
 	});
-	if (shortkitCommit) {
+	if (drain) {
 		// /desktop/* already requires this host's credential.
-		app.get("/desktop/shortkit-update", (c) =>
-			c.json({
-				commit: shortkitCommit,
-				activeChats: hasActiveChats(),
-				pid: process.pid,
-				organizationId: env.ORGANIZATION_ID,
-			}),
-		);
+		const status = () => ({
+			commit: shortkitCommit,
+			activeChats: hasActiveChats(),
+			pid: process.pid,
+			organizationId: env.ORGANIZATION_ID,
+		});
+		app.get("/desktop/shortkit-update", (c) => c.json(status()));
+		app.post("/desktop/shortkit-update/:token", (c) => {
+			const host = status();
+			const held = drain.holdIfIdle(c.req.param("token"), host.activeChats);
+			return c.json({ ...host, held });
+		});
 	}
 	disposeRef.current = dispose;
 	recordUnfinishedChatsRef.current = recordUnfinishedChats;

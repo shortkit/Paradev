@@ -150,6 +150,7 @@ export type ChatV3Mount = {
  * should pay for until something actually asks for a chat session.
  */
 export function createChatV3Mount(options: {
+	assertChatAdmission?: () => void;
 	db: HostDb;
 	api: ApiClient;
 	dbPath: string;
@@ -211,6 +212,7 @@ export function createChatV3Mount(options: {
 	const runtime = (): ChatRuntime => {
 		if (built) return built;
 		built = createChatRuntime({
+			assertChatAdmission: options.assertChatAdmission,
 			dataDir: dirname(options.dbPath),
 			migrationsFolder: migrationsFolder(),
 			harnesses: harnessRegistry(

@@ -45,6 +45,10 @@ export type LiveSessionOptions = {
 	now?: () => number;
 	/** How long after a usage limit's reset the host waits before continuing. */
 	usageLimitGraceMs?: number;
+	admission: {
+		assertAdmission(): void;
+		runNativeOperation<T>(action: () => Promise<T>): Promise<T>;
+	};
 };
 
 /** Providers can still refuse right at the reset; give them a moment. */
@@ -226,6 +230,19 @@ export class LiveSession {
 		return this.sent - this.carriedPrompts;
 	}
 
+	get hasActiveWork(): boolean {
+		return (
+			this.busy ||
+			this.queuedCount > 0 ||
+			this.heldPaused.length > 0 ||
+			this.resumeTimer !== null ||
+			this.state.status === "starting" ||
+			this.state.status === "running" ||
+			this.state.status === "awaiting_input" ||
+			Boolean(this.state.backgroundTasks?.length)
+		);
+	}
+
 	get queuedCount(): number {
 		return this.queue.length;
 	}
@@ -268,6 +285,7 @@ export class LiveSession {
 		pausedPrompts: UserContent[][] = [],
 		onReleased?: () => void,
 	): void {
+		this.options.admission.assertAdmission();
 		const toRun = prompts.filter((content) => !this.claimCarried(content));
 		const resumesCarried = toRun.length < prompts.length;
 		this.heldUntilStarted.push(...toRun);
@@ -339,6 +357,7 @@ export class LiveSession {
 		clientId: string,
 		options: { steerTurnId?: string; snapshotWorktree?: boolean } = {},
 	): PromptResult {
+		this.options.admission.assertAdmission();
 		const { steerTurnId, snapshotWorktree } = options;
 		const itemId = this.mintId();
 		const seq = ++this.sent;
@@ -437,6 +456,7 @@ export class LiveSession {
 	}
 
 	steerQueued(itemId: string): void {
+		this.options.admission.assertAdmission();
 		const index = this.requireQueuedIndex(itemId);
 		const [steered] = this.queue.splice(index, 1);
 		if (!steered) return;
@@ -488,6 +508,7 @@ export class LiveSession {
 	}
 
 	resumeQueue(): void {
+		this.options.admission.assertAdmission();
 		const limited = this.sessionState.usageLimit !== undefined;
 		if (!this.queuePaused && !limited) return;
 		this.clearResumeTimer();
@@ -503,6 +524,7 @@ export class LiveSession {
 	 * next queued prompt if there is one, else a plain "Continue".
 	 */
 	respondToUsageLimit(action: UsageLimitAction): void {
+		this.options.admission.assertAdmission();
 		const limit = this.sessionState.usageLimit;
 		if (this.stopped || !limit) return;
 		switch (action) {
@@ -637,6 +659,7 @@ export class LiveSession {
 		approvalId: string,
 		decision: Parameters<HarnessAdapter["respondToApproval"]>[1],
 	): void {
+		this.options.admission.assertAdmission();
 		this.options.adapter.respondToApproval(approvalId, decision);
 	}
 
@@ -664,25 +687,29 @@ export class LiveSession {
 	}
 
 	steerSubagent(taskId: string, content: UserContent[]): Promise<boolean> {
-		return (
-			this.options.adapter.steerSubagent?.(
-				taskId,
-				withHiddenWrapped(content),
-			) ?? Promise.resolve(false)
+		return this.options.admission.runNativeOperation(
+			() =>
+				this.options.adapter.steerSubagent?.(
+					taskId,
+					withHiddenWrapped(content),
+				) ?? Promise.resolve(false),
 		);
 	}
 
 	backgroundSubagent(taskId: string): Promise<boolean> {
-		return (
-			this.options.adapter.backgroundSubagent?.(taskId) ??
-			Promise.resolve(false)
+		return this.options.admission.runNativeOperation(
+			() =>
+				this.options.adapter.backgroundSubagent?.(taskId) ??
+				Promise.resolve(false),
 		);
 	}
 
 	/** An agent has no session to copy until it has started. */
-	async fork(cut?: { upToMessageId: string }): Promise<string | null> {
-		if (!this.options.adapter.fork || !(await this.started)) return null;
-		return this.options.adapter.fork(cut);
+	fork(cut?: { upToMessageId: string }): Promise<string | null> {
+		return this.options.admission.runNativeOperation(async () => {
+			if (!this.options.adapter.fork || !(await this.started)) return null;
+			return this.options.adapter.fork(cut);
+		});
 	}
 
 	/** `error` says why the agent went away, when the user did not stop it. */

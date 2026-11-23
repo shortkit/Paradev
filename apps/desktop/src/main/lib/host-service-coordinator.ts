@@ -609,6 +609,27 @@ export class HostServiceCoordinator extends EventEmitter {
 		return this.startWithPreferredPorts(organizationId, config, preferredPorts);
 	}
 
+	/** Snapshot of the exact children an ordinary quit would stop. */
+	captureUpdateHosts() {
+		const instances = new Map(this.instances);
+		const assertCurrent = () => {
+			if (this.pendingStarts.size || instances.size !== this.instances.size)
+				throw new Error("Host set changed or startup in progress");
+			for (const [id, host] of instances) {
+				if (
+					this.instances.get(id) !== host ||
+					!host.owned ||
+					host.status !== "running" ||
+					!Number.isSafeInteger(host.pid) ||
+					host.pid < 2
+				)
+					throw new Error("Cannot establish host identity or readiness");
+			}
+		};
+		assertCurrent();
+		return { instances, assertCurrent };
+	}
+
 	getConnection(organizationId: string): Connection | null {
 		const instance = this.instances.get(organizationId);
 		if (!instance || instance.status !== "running") return null;

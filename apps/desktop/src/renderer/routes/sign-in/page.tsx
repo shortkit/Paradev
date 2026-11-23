@@ -16,6 +16,7 @@ import { Redirect } from "renderer/components/Redirect";
 import { SupersetLogo } from "renderer/components/SupersetLogo";
 import { env } from "renderer/env.renderer";
 import { useDelayElapsed } from "renderer/hooks/useDelayElapsed";
+import { useShortkitRendererReady } from "renderer/hooks/useShortkitRendererReady";
 import { track } from "renderer/lib/analytics";
 import { setAuthToken } from "renderer/lib/auth-client";
 import { electronTrpc } from "renderer/lib/electron-trpc";
@@ -56,6 +57,12 @@ function SignInPage() {
 	const pendingTimedOut = useDelayElapsed(
 		isPending,
 		SESSION_PENDING_TIMEOUT_MS,
+	);
+
+	useShortkitRendererReady(
+		!env.SKIP_ENV_VALIDATION &&
+			(!isPending || pendingTimedOut) &&
+			!session?.user,
 	);
 
 	// Dev bypass: skip sign-in entirely

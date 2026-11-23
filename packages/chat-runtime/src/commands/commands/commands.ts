@@ -612,6 +612,7 @@ export function createCommands(options: CommandsOptions): ChatCommands {
 
 	return {
 		createSession(input) {
+			options.live.assertAdmission();
 			const parsed = createSessionCommandSchema.parse(input);
 			return options.dedupe.run(`createSession:${parsed.commandId}`, () => {
 				const pending = resumedFor(parsed);
@@ -748,6 +749,7 @@ export function createCommands(options: CommandsOptions): ChatCommands {
 		},
 
 		continueSession(input) {
+			options.live.assertAdmission();
 			const session = options.sessions.get(input.sessionId);
 			if (!session)
 				throw new Error(`chat session ${input.sessionId} not found`);

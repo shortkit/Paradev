@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useShortkitRendererReady } from "renderer/hooks/useShortkitRendererReady";
 import { NewWorkspaceScreen } from "renderer/routes/_authenticated/components/DashboardNewWorkspaceModal/components/NewWorkspaceScreen";
 import { DashboardNewWorkspaceDraftProvider } from "renderer/routes/_authenticated/components/DashboardNewWorkspaceModal/DashboardNewWorkspaceDraftContext";
 
@@ -22,6 +23,7 @@ export const Route = createFileRoute(
  */
 function NewWorkspacePage() {
 	const { projectId, session, host } = Route.useSearch();
+	useShortkitRendererReady(true);
 	return (
 		<DashboardNewWorkspaceDraftProvider onClose={() => {}}>
 			<NewWorkspaceScreen

@@ -30,6 +30,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { resolveWriteTarget } from "@superset/agent-setup";
+import { isShortkitHome } from "@superset/agent-setup/paths";
 import type { HostDb } from "../../../../db";
 import { resolveDefaultAccountEnv } from "../../usage/default-account";
 
@@ -240,6 +241,7 @@ export async function seedAgentFolderTrust(
 	folderPath: string,
 	config: { presetId: string; command: string; env: Record<string, string> },
 ): Promise<void> {
+	if (isShortkitHome()) return;
 	try {
 		const target = resolveTrustTarget(db, config);
 		if (target === null) return;

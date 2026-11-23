@@ -16,7 +16,10 @@ function setup(status = "idle") {
 	const prompt = mock((_input: unknown) => ({ itemId: "i", queued: false }));
 	const chat = {
 		commands: { prompt },
-		live: { get: () => ({ state: { status } }) },
+		live: {
+			get: () => ({ state: { status } }),
+			runNativeOperation: <T>(work: () => Promise<T>) => work(),
+		},
 	} as unknown as ChatRuntime;
 	const send = (overrides: Partial<Parameters<typeof sendToAgent>[0]> = {}) =>
 		sendToAgent({

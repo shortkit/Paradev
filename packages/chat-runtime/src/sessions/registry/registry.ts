@@ -37,6 +37,14 @@ export type LiveSessionObserver = {
 	stopped(sessionId: string): void;
 };
 
+type DiscoveryInput = {
+	harness: string;
+	scopeId: string;
+	cwd: string;
+	agentConfigId?: string;
+	cursor?: string;
+};
+
 export type LiveSessionRegistryOptions = {
 	journal: ChatJournal;
 	publish: (envelope: Envelope) => void;
@@ -46,6 +54,7 @@ export type LiveSessionRegistryOptions = {
 	mintId?: () => string;
 	now?: () => number;
 	usageLimitGraceMs?: number;
+	assertChatAdmission?: () => void;
 };
 
 function warnOnFailure(work: Promise<unknown>): void {
@@ -78,6 +87,7 @@ function sessionCheckpoints(
 }
 
 export class LiveSessionRegistry {
+	private pendingNativeOperations = 0;
 	private readonly live = new Map<string, LiveSession>();
 
 	constructor(private readonly options: LiveSessionRegistryOptions) {}
@@ -91,13 +101,23 @@ export class LiveSessionRegistry {
 	 * and workspace when one is up; otherwise builds a temporary adapter from
 	 * the registry factory and disposes it. Does not open a journal session.
 	 */
-	async discoverSessions(input: {
-		harness: string;
-		scopeId: string;
-		cwd: string;
-		agentConfigId?: string;
-		cursor?: string;
-	}): Promise<DiscoverSessionsResult> {
+	discoverSessions(input: DiscoveryInput): Promise<DiscoverSessionsResult> {
+		return this.runNativeOperation(() => this.discoverNativeSessions(input));
+	}
+
+	async runNativeOperation<T>(action: () => Promise<T>): Promise<T> {
+		this.assertAdmission();
+		this.pendingNativeOperations++;
+		try {
+			return await action();
+		} finally {
+			this.pendingNativeOperations--;
+		}
+	}
+
+	private async discoverNativeSessions(
+		input: DiscoveryInput,
+	): Promise<DiscoverSessionsResult> {
 		const query: DiscoverNativeSessionsInput = {
 			cwd: input.cwd,
 			...(input.cursor ? { cursor: input.cursor } : {}),
@@ -137,7 +157,12 @@ export class LiveSessionRegistry {
 		}
 	}
 
+	assertAdmission(): void {
+		this.options.assertChatAdmission?.();
+	}
+
 	create(options: HarnessFactoryOptions): LiveSession {
+		this.assertAdmission();
 		const factory = this.options.harnesses.get(options.harness);
 		if (!factory) throw new Error(`unknown harness ${options.harness}`);
 		if (this.live.has(options.sessionId)) {
@@ -171,6 +196,7 @@ export class LiveSessionRegistry {
 				: {}),
 			mintId: this.options.mintId,
 			now: this.options.now,
+			admission: this,
 			usageLimitGraceMs: this.options.usageLimitGraceMs,
 		});
 		this.live.set(options.sessionId, session);
@@ -202,16 +228,9 @@ export class LiveSessionRegistry {
 	}
 
 	hasActiveWork(): boolean {
+		if (this.pendingNativeOperations > 0) return true;
 		for (const session of this.live.values()) {
-			if (
-				session.busy ||
-				session.queuedCount ||
-				session.state.status === "starting" ||
-				session.state.status === "running" ||
-				session.state.status === "awaiting_input" ||
-				session.state.backgroundTasks?.length
-			)
-				return true;
+			if (session.hasActiveWork) return true;
 		}
 		return false;
 	}

@@ -106,6 +106,7 @@ export interface CreateAppOptions {
 		allowedOrigins: string | string[];
 		/** Loopback surface for driving desktop browser panes; desktop-only. */
 		browserBridge?: BrowserBridgeConfig;
+		assertChatAdmission?: () => void;
 	};
 	providers: {
 		auth: ApiAuthProvider;
@@ -365,6 +366,7 @@ export function createApp(options: CreateAppOptions): CreateAppResult {
 		browserBridge: config.browserBridge,
 	};
 	const chatV3 = createChatV3Mount({
+		assertChatAdmission: config.assertChatAdmission,
 		db,
 		api,
 		dbPath: config.dbPath,
