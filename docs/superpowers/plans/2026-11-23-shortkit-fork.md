@@ -49,7 +49,7 @@
 - [x] Build B from the committed change, then start a second Codex session and a heartbeat command in fork terminals.
 - [x] Record terminal IDs, PIDs and continuous output.
 - [x] Apply B while test terminals run; verify same live processes, reattachment and agent follow-up.
-- [ ] Visually inspect the changed UI; native automation is unavailable and no screenshot is claimed.
+- [x] Visually inspect the changed UI; native automation recovered and the installed label and surviving Codex terminal were verified.
 - [x] Reject an invalid candidate without affecting running app; exercise compatible app recovery and reapply B.
 - [x] Save concise verification evidence and a repeatable user workflow; commit and push fork branch only after review.
 
@@ -59,4 +59,4 @@ Fork created and transferred to shortkit organization. Clone /Users/michaelselem
 
 Fork code and fixture coverage are in this worktree. The build, apply, and recovery commands are documented in `scripts/shortkit/README.md`. Packaged verification and live acceptance belong to the coordinator.
 
-Live update, same-build reapply, compatible rollback and reapplication passed for implementation commit `d999b39b4da7e835194d9721a0da6653cf0fd9a8`. Both Codex sessions and the heartbeat retained their original PIDs, and the official app stayed running. Detailed results and limitations are in `scripts/shortkit/VERIFICATION.md`. Visual acceptance remains pending.
+Live update, same-build reapply, compatible rollback and reapplication passed for implementation commit `d999b39b4da7e835194d9721a0da6653cf0fd9a8`. Both Codex sessions and the heartbeat retained their original PIDs, and the official app stayed running. Detailed results and limitations are in `scripts/shortkit/VERIFICATION.md`. Visual acceptance subsequently passed through native accessibility and window screenshots. Settings was identified as a reproducible false-negative health route; workspace and Home report ready.

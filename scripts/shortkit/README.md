@@ -1,6 +1,6 @@
 # Local Paradev ShortKit updates
 
-See [verification results](VERIFICATION.md) for the tested build, live session-continuity results and outstanding visual check.
+See [verification results](VERIFICATION.md) for the tested build, live session-continuity results and visual verification.
 
 The helper builds a production macOS arm64 directory bundle from a Git commit. It installs at `~/Applications/Paradev ShortKit.app`. The fork uses `dev.shortkit.paradev`, the `superset-shortkit` URL scheme, `~/.paradev-shortkit` for host data, and `~/Library/Application Support/Paradev ShortKit` for Electron. Hosted sign-in runs against the production service. The notification server uses loopback port 51742.
 
@@ -27,7 +27,7 @@ The stage must have clean Git status and use production build settings. The fres
 
 ## Install and update
 
-Run the helper from a regular shell or a daemon-backed terminal in the fork. Finish browser automation and other work that requires continuous access to a browser pane first. Browser panes and the desktop browser bridge disconnect during restart. The helper relies on the operator to confirm browser automation is idle. Wait for built-in chats to finish, including approvals, queued prompts, and background work.
+Run the helper from a regular shell or a daemon-backed terminal in the fork. Keep a fork workspace or Home open: the current renderer health acknowledgement does not cover Settings. Finish browser automation and other work that requires continuous access to a browser pane first. Browser panes and the desktop browser bridge disconnect during restart. The helper relies on the operator to confirm browser automation is idle. Wait for built-in chats to finish, including approvals, queued prompts, and background work.
 
 ```sh
 candidate="$HOME/.local/share/paradev-fork/builds/$(git rev-parse HEAD)/Paradev ShortKit.app"
