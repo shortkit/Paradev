@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import json
 import socket
@@ -8,6 +9,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import update
 
@@ -39,6 +41,20 @@ class BuildToolchainTests(unittest.TestCase):
         self.executable(self.node, "v22.16.0")
         with self.assertRaisesRegex(ValueError, "22.23.5"):
             update.build_toolchain(self.root, str(self.system))
+
+    def test_packaging_invokes_desktop_builder_with_private_node(self):
+        self.executable(self.node, "v22.23.5")
+        desktop = self.root / "stage/apps/desktop"
+        builder = desktop / "node_modules/.bin/electron-builder"
+        builder.parent.mkdir(parents=True)
+        (desktop / "electron-builder.ts").touch()
+        builder.write_text("#!/bin/sh\nnode --version > builder-runtime\n")
+        builder.chmod(0o755)
+        _, path = update.build_toolchain(self.root, str(self.system))
+        update.package_desktop(desktop, self.root / "package", {"PATH": path})
+        runtime = desktop / "builder-runtime"
+        self.assertTrue(runtime.is_file(), "Desktop-local builder was never invoked")
+        self.assertEqual(runtime.read_text().strip(), "v22.23.5")
 
 
 class FakeMac:
@@ -115,6 +131,29 @@ class InstallTests(unittest.TestCase):
             self.installer.apply(self.candidate)
         self.assertEqual(update.read_build(self.app).commit, "a" * 40)
         self.assertEqual(self.mac.stops, [])
+
+    def test_launch_only_requests_loopback_debugging_with_an_explicit_port(self):
+        build = update.read_build(self.app)
+        with patch.object(update, "run") as launch, patch.object(update, "wait_until"):
+            update.Mac(self.home).launch(self.app, build, [])
+            launch.assert_called_once_with("/usr/bin/open", "-a", self.app)
+            launch.reset_mock()
+            update.Mac(self.home, debug_port=9417).launch(self.app, build, [])
+            launch.assert_called_once_with(
+                "/usr/bin/open",
+                "-a",
+                self.app,
+                "--args",
+                "--remote-debugging-port=9417",
+                "--remote-debugging-address=127.0.0.1",
+            )
+
+    def test_debug_port_requires_an_integer_in_the_allowed_range(self):
+        for value in ("1024", "65535"):
+            self.assertEqual(update.parse_debug_port(value), int(value))
+        for value in ("1023", "65536", "9417.5", "port"):
+            with self.assertRaises(argparse.ArgumentTypeError, msg=value):
+                update.parse_debug_port(value)
 
     def test_display_name_alone_never_identifies_the_target(self):
         plist = self.app / "Contents/Info.plist"

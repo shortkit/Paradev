@@ -233,8 +233,9 @@ def verify_asar(archive, commit):
 
 
 class Mac:
-    def __init__(self, home):
+    def __init__(self, home, debug_port=None):
         self.home = home
+        self.debug_port = debug_port
 
     def verify(self, app):
         contents = app / "Contents"
@@ -400,7 +401,14 @@ JSON.stringify(result)
         return status["organizations"]
 
     def launch(self, app, build, organizations):
-        run("/usr/bin/open", "-a", app)
+        args = []
+        if self.debug_port is not None:
+            args = [
+                "--args",
+                f"--remote-debugging-port={self.debug_port}",
+                "--remote-debugging-address=127.0.0.1",
+            ]
+        run("/usr/bin/open", "-a", app, *args)
 
         def ready():
             pid = self.pid(app)
@@ -499,6 +507,22 @@ def build_toolchain(toolchain, inherited_path):
         actual = output(executable, "--version")
         require(actual == expected, f"Expected {executable} {expected}, found {actual}")
     return bun, os.pathsep.join((str(bun.parent), str(node.parent), inherited_path))
+
+
+def package_desktop(desktop, out, env):
+    run(
+        desktop / "node_modules/.bin/electron-builder",
+        "--config",
+        "electron-builder.shortkit.ts",
+        "--dir",
+        "--mac",
+        "--arm64",
+        "--publish",
+        "never",
+        f"-c.directories.output={out}",
+        cwd=desktop,
+        env=env,
+    )
 
 
 def prepare(revision, stage):
@@ -611,27 +635,23 @@ def prepare(revision, stage):
             ):
                 run(bun, "run", step, cwd=desktop, env=env)
             out = Path(tmp) / "package"
-            run(
-                bun,
-                "run",
-                "electron-builder",
-                "--config",
-                "electron-builder.shortkit.ts",
-                "--dir",
-                "--mac",
-                "--arm64",
-                "--publish",
-                "never",
-                f"-c.directories.output={out}",
-                cwd=desktop,
-                env=env,
-            )
+            package_desktop(desktop, out, env)
             app = out / "mac-arm64" / APP
             require(read_build(app).commit == commit, "Packaged commit mismatch")
             mac.verify(app)
             artifact.parent.mkdir(exist_ok=True)
             app.rename(artifact)
     return artifact
+
+
+def parse_debug_port(value):
+    try:
+        port = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected an integer port") from exc
+    if not 1024 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port must be between 1024 and 65535")
+    return port
 
 
 def main():
@@ -651,19 +671,25 @@ def main():
     )
     apply = sub.add_parser("apply", help="install or update the fork")
     apply.add_argument("candidate", type=Path)
-    sub.add_parser("rollback", help="restore the previous compatible bundle")
+    rollback = sub.add_parser("rollback", help="restore the previous compatible bundle")
+    for command in (apply, rollback):
+        command.add_argument(
+            "--debug-port",
+            type=parse_debug_port,
+            metavar="PORT",
+            help="launch with loopback CDP on PORT (1024–65535)",
+        )
     args = parser.parse_args()
     require(sys.platform == "darwin", "This local installer requires macOS")
-    mac = Mac(DATA)
-    installer = Installer(INSTALL, DATA, mac)
     if args.command == "prepare":
         print(prepare(args.revision, args.stage))
     elif args.command == "verify":
         candidate = args.candidate.absolute()
         build = read_build(candidate)
-        mac.verify(candidate)
+        Mac(DATA).verify(candidate)
         print(f"{ID} {build.commit} {candidate}")
     else:
+        installer = Installer(INSTALL, DATA, Mac(DATA, debug_port=args.debug_port))
         print(
             "Browser panes and browser automation disconnect during restart. Finish browser-dependent work before applying.",
             flush=True,

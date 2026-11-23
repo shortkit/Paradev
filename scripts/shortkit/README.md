@@ -53,6 +53,17 @@ python3 scripts/shortkit/update.py rollback
 
 The installer keeps recovery copies by commit under `~/Applications/.paradev-shortkit-update/`. Rollback uses the same lock, staging, validation, chat check and health check as apply. On a failed launch, apply attempts to reopen the previous compatible copy. If a host or a running candidate cannot report chat safety, finish or close its work and quit the fork normally before retrying recovery. A migration missing from the recovery build blocks a downgrade. A forward fix is needed if the new binary already applied an incompatible migration. The helper never restores databases or terminates a terminal daemon.
 
+## Inspect the packaged renderer
+
+For packaged UI acceptance, add `--debug-port 9417` to the intended apply or rollback command. Choose an unused port from 1024 through 65535. This requests a loopback Chrome DevTools Protocol listener for launches during that operation. Ordinary launches use the app defaults.
+
+```sh
+python3 scripts/shortkit/update.py apply "$candidate" --debug-port 9417
+lsof -nP -iTCP:9417 -sTCP:LISTEN
+```
+
+Before attaching, confirm the listener is bound to `127.0.0.1:9417` and its PID belongs to the executable inside `~/Applications/Paradev ShortKit.app`. Then use `http://127.0.0.1:9417/json/list` to select the packaged renderer and check its route and visible build label. To inspect a recovery launch, use `python3 scripts/shortkit/update.py rollback --debug-port 9417` and repeat the ownership check.
+
 The baseline build label is `ShortKit · A` in `apps/desktop/src/shared/shortkit-build.ts`. The fork development session can change this label for build B.
 
 Run the installer tests with `python3 -B -m unittest discover -s scripts/shortkit -v`.
