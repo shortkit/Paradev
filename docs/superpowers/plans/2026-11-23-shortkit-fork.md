@@ -51,7 +51,7 @@
 - [x] Apply B while test terminals run; verify same live processes, reattachment and agent follow-up.
 - [ ] Visually inspect the changed UI; native automation is unavailable and no screenshot is claimed.
 - [x] Reject an invalid candidate without affecting running app; exercise compatible app recovery and reapply B.
-- [ ] Save concise verification evidence and a repeatable user workflow; commit and push fork branch only after review.
+- [x] Save concise verification evidence and a repeatable user workflow; commit and push fork branch only after review.
 
 ## Progress
 
