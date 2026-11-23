@@ -3,6 +3,7 @@ import { cn } from "@superset/ui/utils";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { SiGithub } from "react-icons/si";
+import { useShortkitRendererReady } from "renderer/hooks/useShortkitRendererReady";
 import { electronTrpc } from "renderer/lib/electron-trpc";
 import { GhAuthDialog, type GhAuthDialogMode } from "./components/GhAuthDialog";
 import { OnboardingTile } from "./components/OnboardingTile";
@@ -32,6 +33,7 @@ function OnboardingDashboardPage() {
 		isPending: isPendingGh,
 	} = electronTrpc.system.detectGhCli.useQuery(undefined, statusPolling);
 	const { data: brewStatus } = electronTrpc.system.detectBrew.useQuery();
+	useShortkitRendererReady(!isPendingGh);
 
 	const ghInstalled = ghStatus?.installed === true;
 	const ghReady = ghInstalled && ghStatus?.authenticated === true;

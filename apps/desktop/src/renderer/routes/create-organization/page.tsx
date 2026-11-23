@@ -18,6 +18,7 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Redirect } from "renderer/components/Redirect";
+import { useShortkitRendererReady } from "renderer/hooks/useShortkitRendererReady";
 import { useSignOut } from "renderer/hooks/useSignOut";
 import { apiTrpcClient } from "renderer/lib/api-trpc-client";
 import { authClient } from "renderer/lib/auth-client";
@@ -53,6 +54,7 @@ export function CreateOrganization() {
 	const activeOrganizationId = session?.session?.activeOrganizationId;
 	const signOut = useSignOut();
 	const navigate = useNavigate();
+	useShortkitRendererReady(isSignedIn);
 
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [isCheckingSlug, setIsCheckingSlug] = useState(false);
